@@ -48,7 +48,6 @@ import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.RAMDirectory;
 import org.elasticsearch.action.admin.indices.alias.Alias;
-import org.elasticsearch.common.inject.internal.Join;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.test.ESIntegTestCase;
@@ -128,7 +127,6 @@ public abstract class AbstractTermVectorsTestCase extends ESIntegTestCase {
         public final String[] fieldContent;
         public String index = "test";
         public String alias = "alias";
-        public String type = "type1";
 
         public TestDoc(String id, TestFieldSetting[] fieldSettings, String[] fieldContent) {
             this.id = id;
@@ -150,7 +148,7 @@ public abstract class AbstractTermVectorsTestCase extends ESIntegTestCase {
         @Override
         public String toString() {
 
-            StringBuilder sb = new StringBuilder("index:").append(index).append(" type:").append(type).append(" id:").append(id);
+            StringBuilder sb = new StringBuilder("index:").append(index).append(" id:").append(id);
             for (int i = 0; i < fieldSettings.length; i++) {
                 TestFieldSetting f = fieldSettings[i];
                 sb.append("\n").append("Field: ").append(f).append("\n  content:").append(fieldContent[i]);
@@ -167,7 +165,7 @@ public abstract class AbstractTermVectorsTestCase extends ESIntegTestCase {
         public final boolean requestPositions;
         public final boolean requestOffsets;
         public final boolean requestPayloads;
-        public Class expectedException = null;
+        public Class<? extends Exception> expectedException = null;
 
         public TestConfig(TestDoc doc, String[] selectedFields, boolean requestPositions, boolean requestOffsets, boolean requestPayloads) {
             this.doc = doc;
@@ -177,7 +175,7 @@ public abstract class AbstractTermVectorsTestCase extends ESIntegTestCase {
             this.requestPayloads = requestPayloads;
         }
 
-        public TestConfig expectedException(Class exceptionClass) {
+        public TestConfig expectedException(Class<? extends Exception> exceptionClass) {
             this.expectedException = exceptionClass;
             return this;
         }
@@ -196,7 +194,7 @@ public abstract class AbstractTermVectorsTestCase extends ESIntegTestCase {
             }
             Locale aLocale = new Locale("en", "US");
             return String.format(aLocale, "(doc: %s\n requested: %s, fields: %s)", doc, requested,
-                    selectedFields == null ? "NULL" : Join.join(",", selectedFields));
+                    selectedFields == null ? "NULL" : String.join(",", selectedFields));
         }
     }
 
@@ -237,7 +235,7 @@ public abstract class AbstractTermVectorsTestCase extends ESIntegTestCase {
             }
             final String id = routingKeyForShard(index, i);
             TestDoc doc = new TestDoc(id, fieldSettings, contentArray.clone());
-            index(doc.index, doc.type, doc.id, docSource);
+            index(doc.index, doc.id, docSource);
             testDocs[i] = doc;
         }
 
@@ -273,8 +271,10 @@ public abstract class AbstractTermVectorsTestCase extends ESIntegTestCase {
             configs.add(config);
         }
         // always adds a test that fails
-        configs.add(new TestConfig(new TestDoc("doesnt_exist", new TestFieldSetting[]{}, new String[]{}).index("doesn't_exist").alias("doesn't_exist"),
-                new String[]{"doesnt_exist"}, true, true, true).expectedException(org.elasticsearch.index.IndexNotFoundException.class));
+        configs.add(new TestConfig(new TestDoc("doesnt_exist", new TestFieldSetting[]{}, new String[]{})
+            .index("doesn't_exist").alias("doesn't_exist"),
+                new String[]{"doesnt_exist"}, true, true, true)
+            .expectedException(org.elasticsearch.index.IndexNotFoundException.class));
 
         refresh();
 
@@ -402,9 +402,10 @@ public abstract class AbstractTermVectorsTestCase extends ESIntegTestCase {
     }
 
     protected TermVectorsRequestBuilder getRequestForConfig(TestConfig config) {
-        return client().prepareTermVectors(randomBoolean() ? config.doc.index : config.doc.alias, config.doc.type, config.doc.id).setPayloads(config.requestPayloads)
-                .setOffsets(config.requestOffsets).setPositions(config.requestPositions).setFieldStatistics(true).setTermStatistics(true)
-                .setSelectedFields(config.selectedFields).setRealtime(false);
+        return client().prepareTermVectors(randomBoolean() ? config.doc.index : config.doc.alias, config.doc.id)
+            .setPayloads(config.requestPayloads)
+            .setOffsets(config.requestOffsets).setPositions(config.requestPositions).setFieldStatistics(true).setTermStatistics(true)
+            .setSelectedFields(config.selectedFields).setRealtime(false);
     }
 
     protected Fields getTermVectorsFromLucene(DirectoryReader directoryReader, TestDoc doc) throws IOException {

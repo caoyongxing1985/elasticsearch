@@ -19,21 +19,18 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.AnalyzerCaster;
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Method;
-import org.elasticsearch.painless.Definition.MethodKey;
+import org.elasticsearch.painless.ClassWriter;
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.FunctionRef;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
+import org.elasticsearch.painless.ScriptRoot;
 import org.objectweb.asm.Type;
 
 import java.util.Objects;
 import java.util.Set;
-
-import static org.elasticsearch.painless.WriterConstants.LAMBDA_BOOTSTRAP_HANDLE;
 
 /**
  * Represents a function reference.
@@ -53,70 +50,36 @@ public final class EFunctionRef extends AExpression implements ILambda {
     }
 
     @Override
-    void extractVariables(Set<String> variables) {}
+    void storeSettings(CompilerSettings settings) {
+        // do nothing
+    }
 
     @Override
-    void analyze(Locals locals) {
+    void extractVariables(Set<String> variables) {
+        // do nothing
+    }
+
+    @Override
+    void analyze(ScriptRoot scriptRoot, Locals locals) {
         if (expected == null) {
             ref = null;
             actual = String.class;
             defPointer = "S" + type + "." + call + ",0";
         } else {
             defPointer = null;
-            try {
-                if ("this".equals(type)) {
-                    // user's own function
-                    Method interfaceMethod = locals.getDefinition().ClassToType(expected).struct.functionalMethod;
-                    if (interfaceMethod == null) {
-                        throw new IllegalArgumentException("Cannot convert function reference [" + type + "::" + call + "] " +
-                                                           "to [" + Definition.ClassToName(expected) + "], not a functional interface");
-                    }
-                    Method delegateMethod = locals.getMethod(new MethodKey(call, interfaceMethod.arguments.size()));
-                    if (delegateMethod == null) {
-                        throw new IllegalArgumentException("Cannot convert function reference [" + type + "::" + call + "] " +
-                                                           "to [" + Definition.ClassToName(expected) + "], function not found");
-                    }
-                    ref = new FunctionRef(expected, interfaceMethod, delegateMethod, 0);
-
-                    // check casts between the interface method and the delegate method are legal
-                    for (int i = 0; i < interfaceMethod.arguments.size(); ++i) {
-                        Class<?> from = interfaceMethod.arguments.get(i);
-                        Class<?> to = delegateMethod.arguments.get(i);
-                        AnalyzerCaster.getLegalCast(location, from, to, false, true);
-                    }
-
-                    if (interfaceMethod.rtn != void.class) {
-                        AnalyzerCaster.getLegalCast(location, delegateMethod.rtn, interfaceMethod.rtn, false, true);
-                    }
-                } else {
-                    // whitelist lookup
-                    ref = new FunctionRef(locals.getDefinition(), expected, type, call, 0);
-                }
-
-            } catch (IllegalArgumentException e) {
-                throw createError(e);
-            }
+            ref = FunctionRef.create(scriptRoot.getPainlessLookup(), scriptRoot.getFunctionTable(), location, expected, type, call, 0);
             actual = expected;
         }
     }
 
     @Override
-    void write(MethodWriter writer, Globals globals) {
+    void write(ClassWriter classWriter, MethodWriter methodWriter, Globals globals) {
         if (ref != null) {
-            writer.writeDebugInfo(location);
-            writer.invokeDynamic(
-                ref.interfaceMethodName,
-                ref.factoryDescriptor,
-                LAMBDA_BOOTSTRAP_HANDLE,
-                ref.interfaceType,
-                ref.delegateClassName,
-                ref.delegateInvokeType,
-                ref.delegateMethodName,
-                ref.delegateType
-            );
+            methodWriter.writeDebugInfo(location);
+            methodWriter.invokeLambdaCall(ref);
         } else {
             // TODO: don't do this: its just to cutover :)
-            writer.push((String)null);
+            methodWriter.push((String)null);
         }
     }
 

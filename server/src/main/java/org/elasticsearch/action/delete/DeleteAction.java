@@ -19,25 +19,14 @@
 
 package org.elasticsearch.action.delete;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class DeleteAction extends Action<DeleteRequest, DeleteResponse, DeleteRequestBuilder> {
+public class DeleteAction extends ActionType<DeleteResponse> {
 
     public static final DeleteAction INSTANCE = new DeleteAction();
     public static final String NAME = "indices:data/write/delete";
 
     private DeleteAction() {
-        super(NAME);
-    }
-
-    @Override
-    public DeleteResponse newResponse() {
-        return new DeleteResponse();
-    }
-
-    @Override
-    public DeleteRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new DeleteRequestBuilder(client, this);
+        super(NAME, DeleteResponse::new);
     }
 }

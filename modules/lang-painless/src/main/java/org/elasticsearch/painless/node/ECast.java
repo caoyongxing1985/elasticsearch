@@ -19,12 +19,15 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Cast;
+import org.elasticsearch.painless.ClassWriter;
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
+import org.elasticsearch.painless.ScriptRoot;
+import org.elasticsearch.painless.lookup.PainlessCast;
+import org.elasticsearch.painless.lookup.PainlessLookupUtility;
 
 import java.util.Objects;
 import java.util.Set;
@@ -35,9 +38,9 @@ import java.util.Set;
 final class ECast extends AExpression {
 
     private AExpression child;
-    private final Cast cast;
+    private final PainlessCast cast;
 
-    ECast(Location location, AExpression child, Cast cast) {
+    ECast(Location location, AExpression child, PainlessCast cast) {
         super(location);
 
         this.child = Objects.requireNonNull(child);
@@ -45,24 +48,29 @@ final class ECast extends AExpression {
     }
 
     @Override
-    void extractVariables(Set<String> variables) {
-        throw new IllegalStateException("Illegal tree structure.");
+    void storeSettings(CompilerSettings settings) {
+        throw createError(new IllegalStateException("illegal tree structure"));
     }
 
     @Override
-    void analyze(Locals locals) {
+    void extractVariables(Set<String> variables) {
         throw createError(new IllegalStateException("Illegal tree structure."));
     }
 
     @Override
-    void write(MethodWriter writer, Globals globals) {
-        child.write(writer, globals);
-        writer.writeDebugInfo(location);
-        writer.writeCast(cast);
+    void analyze(ScriptRoot scriptRoot, Locals locals) {
+        throw createError(new IllegalStateException("Illegal tree structure."));
+    }
+
+    @Override
+    void write(ClassWriter classWriter, MethodWriter methodWriter, Globals globals) {
+        child.write(classWriter, methodWriter, globals);
+        methodWriter.writeDebugInfo(location);
+        methodWriter.writeCast(cast);
     }
 
     @Override
     public String toString() {
-        return singleLineToString(Definition.ClassToName(cast.to), child);
+        return singleLineToString(PainlessLookupUtility.typeToCanonicalTypeName(cast.targetType), child);
     }
 }

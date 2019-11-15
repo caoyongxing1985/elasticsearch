@@ -31,8 +31,10 @@ import org.elasticsearch.script.Script;
 import org.elasticsearch.script.ScriptType;
 import org.elasticsearch.search.sort.SortOrder;
 import org.elasticsearch.test.ESIntegTestCase;
+import org.elasticsearch.test.InternalSettingsPlugin;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.Collections;
@@ -52,7 +54,7 @@ public class ScriptQuerySearchIT extends ESIntegTestCase {
 
     @Override
     protected Collection<Class<? extends Plugin>> nodePlugins() {
-        return Collections.singleton(CustomScriptPlugin.class);
+        return Arrays.asList(CustomScriptPlugin.class, InternalSettingsPlugin.class);
     }
 
     public static class CustomScriptPlugin extends MockScriptPlugin {
@@ -112,12 +114,12 @@ public class ScriptQuerySearchIT extends ESIntegTestCase {
                         .addMapping("my-type", createMappingSource("binary"))
                         .setSettings(indexSettings())
         );
-        client().prepareIndex("my-index", "my-type", "1")
+        client().prepareIndex("my-index").setId("1")
                 .setSource(jsonBuilder().startObject().field("binaryData",
                         Base64.getEncoder().encodeToString(randomBytesDoc1)).endObject())
                 .get();
         flush();
-        client().prepareIndex("my-index", "my-type", "2")
+        client().prepareIndex("my-index").setId("2")
                 .setSource(jsonBuilder().startObject().field("binaryData",
                         Base64.getEncoder().encodeToString(randomBytesDoc2)).endObject())
                 .get();
@@ -131,7 +133,7 @@ public class ScriptQuerySearchIT extends ESIntegTestCase {
                         new Script(ScriptType.INLINE, CustomScriptPlugin.NAME, "doc['binaryData'].get(0).length", emptyMap()))
                 .get();
 
-        assertThat(response.getHits().getTotalHits(), equalTo(1L));
+        assertThat(response.getHits().getTotalHits().value, equalTo(1L));
         assertThat(response.getHits().getAt(0).getId(), equalTo("2"));
         assertThat(response.getHits().getAt(0).getFields().get("sbinaryData").getValues().get(0), equalTo(16));
 
@@ -156,15 +158,15 @@ public class ScriptQuerySearchIT extends ESIntegTestCase {
 
     public void testCustomScriptBoost() throws Exception {
         createIndex("test");
-        client().prepareIndex("test", "type1", "1")
+        client().prepareIndex("test").setId("1")
                 .setSource(jsonBuilder().startObject().field("test", "value beck").field("num1", 1.0f).endObject())
                 .get();
         flush();
-        client().prepareIndex("test", "type1", "2")
+        client().prepareIndex("test").setId("2")
                 .setSource(jsonBuilder().startObject().field("test", "value beck").field("num1", 2.0f).endObject())
                 .get();
         flush();
-        client().prepareIndex("test", "type1", "3")
+        client().prepareIndex("test").setId("3")
                 .setSource(jsonBuilder().startObject().field("test", "value beck").field("num1", 3.0f).endObject())
                 .get();
         refresh();
@@ -178,7 +180,7 @@ public class ScriptQuerySearchIT extends ESIntegTestCase {
                         new Script(ScriptType.INLINE, CustomScriptPlugin.NAME, "doc['num1'].value", Collections.emptyMap()))
                 .get();
 
-        assertThat(response.getHits().getTotalHits(), equalTo(2L));
+        assertThat(response.getHits().getTotalHits().value, equalTo(2L));
         assertThat(response.getHits().getAt(0).getId(), equalTo("2"));
         assertThat(response.getHits().getAt(0).getFields().get("sNum1").getValues().get(0), equalTo(2.0));
         assertThat(response.getHits().getAt(1).getId(), equalTo("3"));
@@ -196,7 +198,7 @@ public class ScriptQuerySearchIT extends ESIntegTestCase {
                         new Script(ScriptType.INLINE, CustomScriptPlugin.NAME, "doc['num1'].value", Collections.emptyMap()))
                 .get();
 
-        assertThat(response.getHits().getTotalHits(), equalTo(1L));
+        assertThat(response.getHits().getTotalHits().value, equalTo(1L));
         assertThat(response.getHits().getAt(0).getId(), equalTo("3"));
         assertThat(response.getHits().getAt(0).getFields().get("sNum1").getValues().get(0), equalTo(3.0));
 
@@ -211,7 +213,7 @@ public class ScriptQuerySearchIT extends ESIntegTestCase {
                         new Script(ScriptType.INLINE, CustomScriptPlugin.NAME, "doc['num1'].value", Collections.emptyMap()))
                 .get();
 
-        assertThat(response.getHits().getTotalHits(), equalTo(3L));
+        assertThat(response.getHits().getTotalHits().value, equalTo(3L));
         assertThat(response.getHits().getAt(0).getId(), equalTo("1"));
         assertThat(response.getHits().getAt(0).getFields().get("sNum1").getValues().get(0), equalTo(1.0));
         assertThat(response.getHits().getAt(1).getId(), equalTo("2"));

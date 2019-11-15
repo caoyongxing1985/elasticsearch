@@ -38,6 +38,14 @@ public class ClusterRerouteRequest extends AcknowledgedRequest<ClusterRerouteReq
     private boolean explain;
     private boolean retryFailed;
 
+    public ClusterRerouteRequest(StreamInput in) throws IOException {
+        super(in);
+        commands = AllocationCommands.readFrom(in);
+        dryRun = in.readBoolean();
+        explain = in.readBoolean();
+        retryFailed = in.readBoolean();
+    }
+
     public ClusterRerouteRequest() {
     }
 
@@ -51,7 +59,7 @@ public class ClusterRerouteRequest extends AcknowledgedRequest<ClusterRerouteReq
     }
 
     /**
-     * Sets a dry run flag (defaults to <tt>false</tt>) allowing to run the commands without
+     * Sets a dry run flag (defaults to {@code false}) allowing to run the commands without
      * actually applying them to the cluster state, and getting the resulting cluster state back.
      */
     public ClusterRerouteRequest dryRun(boolean dryRun) {
@@ -78,7 +86,7 @@ public class ClusterRerouteRequest extends AcknowledgedRequest<ClusterRerouteReq
     }
 
     /**
-     * Sets the retry failed flag (defaults to <tt>false</tt>). If true, the
+     * Sets the retry failed flag (defaults to {@code false}). If true, the
      * request will retry allocating shards that can't currently be allocated due to too many allocation failures.
      */
     public ClusterRerouteRequest setRetryFailed(boolean retryFailed) {
@@ -119,15 +127,6 @@ public class ClusterRerouteRequest extends AcknowledgedRequest<ClusterRerouteReq
     @Override
     public ActionRequestValidationException validate() {
         return null;
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        commands = AllocationCommands.readFrom(in);
-        dryRun = in.readBoolean();
-        explain = in.readBoolean();
-        retryFailed = in.readBoolean();
     }
 
     @Override

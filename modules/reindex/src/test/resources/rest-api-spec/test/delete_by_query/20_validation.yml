@@ -8,10 +8,6 @@
 ---
 "no query fails":
 
-  - skip:
-      version: " - 5.99.99"
-      reason: explicit query is required since 6.0.0
-
   - do:
       catch: /query is missing/
       delete_by_query:
@@ -23,7 +19,6 @@
   - do:
       index:
         index:   test
-        type:    test
         id:      1
         body:    { "text": "test" }
   - do:
@@ -36,18 +31,21 @@
             match_all: {}
 
 ---
-"invalid size fails":
+"invalid max_docs fails":
+  - skip:
+      version: " - 7.2.99"
+      reason: "max_docs introduced in 7.3.0"
+
   - do:
       index:
         index:   test
-        type:    test
         id:      1
         body:    { "text": "test" }
   - do:
-      catch: /\[size\] parameter cannot be negative, found \[-4\]/
+      catch: /\[max_docs\] parameter cannot be negative, found \[-4\]/
       delete_by_query:
         index: test
-        size: -4
+        max_docs: -4
         body:
           query:
             match_all: {}
@@ -57,7 +55,6 @@
   - do:
       index:
         index:   test
-        type:    test
         id:      1
         body:    { "text": "test" }
   - do:

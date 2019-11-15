@@ -40,16 +40,8 @@ public class UpdateRequestBuilder extends InstanceShardOperationRequestBuilder<U
         super(client, action, new UpdateRequest());
     }
 
-    public UpdateRequestBuilder(ElasticsearchClient client, UpdateAction action, String index, String type, String id) {
-        super(client, action, new UpdateRequest(index, type, id));
-    }
-
-    /**
-     * Sets the type of the indexed document.
-     */
-    public UpdateRequestBuilder setType(String type) {
-        request.type(type);
-        return this;
+    public UpdateRequestBuilder(ElasticsearchClient client, UpdateAction action, String index, String id) {
+        super(client, action, new UpdateRequest(index, id));
     }
 
     /**
@@ -151,6 +143,30 @@ public class UpdateRequestBuilder extends InstanceShardOperationRequestBuilder<U
     }
 
     /**
+     * only perform this update request if the document was last modification was assigned the given
+     * sequence number. Must be used in combination with {@link #setIfPrimaryTerm(long)}
+     *
+     * If the document last modification was assigned a different sequence number a
+     * {@link org.elasticsearch.index.engine.VersionConflictEngineException} will be thrown.
+     */
+    public UpdateRequestBuilder setIfSeqNo(long seqNo) {
+        request.setIfSeqNo(seqNo);
+        return this;
+    }
+
+    /**
+     * only perform this update request if the document was last modification was assigned the given
+     * primary term. Must be used in combination with {@link #setIfSeqNo(long)}
+     *
+     * If the document last modification was assigned a different term a
+     * {@link org.elasticsearch.index.engine.VersionConflictEngineException} will be thrown.
+     */
+    public UpdateRequestBuilder setIfPrimaryTerm(long term) {
+        request.setIfPrimaryTerm(term);
+        return this;
+    }
+
+    /**
      * Sets the number of shard copies that must be active before proceeding with the write.
      * See {@link ReplicationRequest#waitForActiveShards(ActiveShardCount)} for details.
      */
@@ -187,7 +203,7 @@ public class UpdateRequestBuilder extends InstanceShardOperationRequestBuilder<U
     /**
      * Sets the doc to use for updates when a script is not specified.
      */
-    public UpdateRequestBuilder setDoc(Map source) {
+    public UpdateRequestBuilder setDoc(Map<String, Object> source) {
         request.doc(source);
         return this;
     }
@@ -195,7 +211,7 @@ public class UpdateRequestBuilder extends InstanceShardOperationRequestBuilder<U
     /**
      * Sets the doc to use for updates when a script is not specified.
      */
-    public UpdateRequestBuilder setDoc(Map source, XContentType contentType) {
+    public UpdateRequestBuilder setDoc(Map<String, Object> source, XContentType contentType) {
         request.doc(source, contentType);
         return this;
     }
@@ -243,8 +259,8 @@ public class UpdateRequestBuilder extends InstanceShardOperationRequestBuilder<U
     }
 
     /**
-     * Sets the index request to be used if the document does not exists. Otherwise, a {@link org.elasticsearch.index.engine.DocumentMissingException}
-     * is thrown.
+     * Sets the index request to be used if the document does not exists. Otherwise, a
+     * {@link org.elasticsearch.index.engine.DocumentMissingException} is thrown.
      */
     public UpdateRequestBuilder setUpsert(IndexRequest indexRequest) {
         request.upsert(indexRequest);
@@ -262,7 +278,7 @@ public class UpdateRequestBuilder extends InstanceShardOperationRequestBuilder<U
     /**
      * Sets the doc source of the update request to be used when the document does not exists.
      */
-    public UpdateRequestBuilder setUpsert(Map source) {
+    public UpdateRequestBuilder setUpsert(Map<String, Object> source) {
         request.upsert(source);
         return this;
     }
@@ -270,7 +286,7 @@ public class UpdateRequestBuilder extends InstanceShardOperationRequestBuilder<U
     /**
      * Sets the doc source of the update request to be used when the document does not exists.
      */
-    public UpdateRequestBuilder setUpsert(Map source, XContentType contentType) {
+    public UpdateRequestBuilder setUpsert(Map<String, Object> source, XContentType contentType) {
         request.upsert(source, contentType);
         return this;
     }

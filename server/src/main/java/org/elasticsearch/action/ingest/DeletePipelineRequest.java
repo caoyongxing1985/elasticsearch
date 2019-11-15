@@ -27,7 +27,6 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 import java.io.IOException;
 import java.util.Objects;
 
-import static org.elasticsearch.action.ValidateActions.addValidationError;
 
 public class DeletePipelineRequest extends AcknowledgedRequest<DeletePipelineRequest> {
 
@@ -38,6 +37,11 @@ public class DeletePipelineRequest extends AcknowledgedRequest<DeletePipelineReq
             throw new IllegalArgumentException("id is missing");
         }
         this.id = id;
+    }
+
+    public DeletePipelineRequest(StreamInput in) throws IOException {
+        super(in);
+        id = in.readString();
     }
 
     DeletePipelineRequest() {
@@ -54,12 +58,6 @@ public class DeletePipelineRequest extends AcknowledgedRequest<DeletePipelineReq
     @Override
     public ActionRequestValidationException validate() {
         return null;
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        id = in.readString();
     }
 
     @Override

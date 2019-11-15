@@ -26,8 +26,8 @@ import org.apache.lucene.search.highlight.Encoder;
 import org.apache.lucene.search.vectorhighlight.BoundaryScanner;
 import org.apache.lucene.search.vectorhighlight.FieldFragList.WeightedFragInfo;
 import org.apache.lucene.search.vectorhighlight.ScoreOrderFragmentsBuilder;
-import org.elasticsearch.index.mapper.FieldMapper;
-import org.elasticsearch.search.internal.SearchContext;
+import org.elasticsearch.index.mapper.MappedFieldType;
+import org.elasticsearch.index.query.QueryShardContext;
 import org.elasticsearch.search.lookup.SourceLookup;
 
 import java.io.IOException;
@@ -35,27 +35,30 @@ import java.util.List;
 
 public class SourceScoreOrderFragmentsBuilder extends ScoreOrderFragmentsBuilder {
 
-    private final FieldMapper mapper;
+    private final MappedFieldType fieldType;
 
-    private final SearchContext searchContext;
+    private final QueryShardContext context;
 
-    public SourceScoreOrderFragmentsBuilder(FieldMapper mapper, SearchContext searchContext, String[] preTags, String[] postTags,
+    public SourceScoreOrderFragmentsBuilder(MappedFieldType fieldType,
+                                            QueryShardContext context,
+                                            String[] preTags,
+                                            String[] postTags,
                                             BoundaryScanner boundaryScanner) {
         super(preTags, postTags, boundaryScanner);
-        this.mapper = mapper;
-        this.searchContext = searchContext;
+        this.fieldType = fieldType;
+        this.context = context;
     }
 
     @Override
     protected Field[] getFields(IndexReader reader, int docId, String fieldName) throws IOException {
         // we know its low level reader, and matching docId, since that's how we call the highlighter with
-        SourceLookup sourceLookup = searchContext.lookup().source();
+        SourceLookup sourceLookup = context.lookup().source();
         sourceLookup.setSegmentAndDocument((LeafReaderContext) reader.getContext(), docId);
 
-        List<Object> values = sourceLookup.extractRawValues(mapper.fieldType().name());
+        List<Object> values = sourceLookup.extractRawValues(fieldType.name());
         Field[] fields = new Field[values.size()];
         for (int i = 0; i < values.size(); i++) {
-            fields[i] = new Field(mapper.fieldType().name(), values.get(i).toString(), TextField.TYPE_NOT_STORED);
+            fields[i] = new Field(fieldType.name(), values.get(i).toString(), TextField.TYPE_NOT_STORED);
         }
         return fields;
     }
@@ -63,7 +66,7 @@ public class SourceScoreOrderFragmentsBuilder extends ScoreOrderFragmentsBuilder
     @Override
     protected String makeFragment( StringBuilder buffer, int[] index, Field[] values, WeightedFragInfo fragInfo,
             String[] preTags, String[] postTags, Encoder encoder ){
-        return super.makeFragment(buffer, index, values, FragmentBuilderHelper.fixWeightedFragInfo(mapper, values, fragInfo),
-                preTags, postTags, encoder);
+        WeightedFragInfo weightedFragInfo = FragmentBuilderHelper.fixWeightedFragInfo(fieldType, values, fragInfo);
+        return super.makeFragment(buffer, index, values, weightedFragInfo, preTags, postTags, encoder);
     }
 }

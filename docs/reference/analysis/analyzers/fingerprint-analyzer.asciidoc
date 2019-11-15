@@ -10,23 +10,9 @@ deduplicated and concatenated into a single token.  If a stopword list is
 configured, stop words will also be removed.
 
 [float]
-=== Definition
-
-It consists of:
-
-Tokenizer::
-* <<analysis-standard-tokenizer,Standard Tokenizer>>
-
-Token Filters (in order)::
-1. <<analysis-lowercase-tokenfilter,Lower Case Token Filter>>
-2. <<analysis-asciifolding-tokenfilter>>
-3. <<analysis-stop-tokenfilter,Stop Token Filter>> (disabled by default)
-4. <<analysis-fingerprint-tokenfilter>>
-
-[float]
 === Example output
 
-[source,js]
+[source,console]
 ---------------------------
 POST _analyze
 {
@@ -34,11 +20,10 @@ POST _analyze
   "text": "Yes yes, Gödel said this sentence is consistent and."
 }
 ---------------------------
-// CONSOLE
 
 /////////////////////
 
-[source,js]
+[source,console-result]
 ----------------------------
 {
   "tokens": [
@@ -52,7 +37,6 @@ POST _analyze
   ]
 }
 ----------------------------
-// TESTRESPONSE
 
 /////////////////////
 
@@ -72,7 +56,7 @@ The `fingerprint` analyzer accepts the following parameters:
 [horizontal]
 `separator`::
 
-    The character to use to concate the terms.  Defaults to a space.
+    The character to use to concatenate the terms.  Defaults to a space.
 
 `max_output_size`::
 
@@ -82,7 +66,7 @@ The `fingerprint` analyzer accepts the following parameters:
 `stopwords`::
 
     A pre-defined stop words list like `_english_` or an array  containing a
-    list of stop words.  Defaults to `\_none_`.
+    list of stop words.  Defaults to `_none_`.
 
 `stopwords_path`::
 
@@ -98,7 +82,7 @@ about stop word configuration.
 In this example, we configure the `fingerprint` analyzer to use the
 pre-defined list of English stop words:
 
-[source,js]
+[source,console]
 ----------------------------
 PUT my_index
 {
@@ -120,11 +104,10 @@ POST my_index/_analyze
   "text": "Yes yes, Gödel said this sentence is consistent and."
 }
 ----------------------------
-// CONSOLE
 
 /////////////////////
 
-[source,js]
+[source,console-result]
 ----------------------------
 {
   "tokens": [
@@ -138,7 +121,6 @@ POST my_index/_analyze
   ]
 }
 ----------------------------
-// TESTRESPONSE
 
 /////////////////////
 
@@ -149,3 +131,45 @@ The above example produces the following term:
 ---------------------------
 [ consistent godel said sentence yes ]
 ---------------------------
+
+[float]
+=== Definition
+
+The `fingerprint` tokenizer consists of:
+
+Tokenizer::
+* <<analysis-standard-tokenizer,Standard Tokenizer>>
+
+Token Filters (in order)::
+* <<analysis-lowercase-tokenfilter,Lower Case Token Filter>>
+* <<analysis-asciifolding-tokenfilter>>
+* <<analysis-stop-tokenfilter,Stop Token Filter>> (disabled by default)
+* <<analysis-fingerprint-tokenfilter>>
+
+If you need to customize the `fingerprint` analyzer beyond the configuration
+parameters then you need to recreate it as a `custom` analyzer and modify
+it, usually by adding token filters. This would recreate the built-in
+`fingerprint` analyzer and you can use it as a starting point for further
+customization:
+
+[source,console]
+----------------------------------------------------
+PUT /fingerprint_example
+{
+  "settings": {
+    "analysis": {
+      "analyzer": {
+        "rebuilt_fingerprint": {
+          "tokenizer": "standard",
+          "filter": [
+            "lowercase",
+            "asciifolding",
+            "fingerprint"
+          ]
+        }
+      }
+    }
+  }
+}
+----------------------------------------------------
+// TEST[s/\n$/\nstartyaml\n  - compare_analyzers: {index: fingerprint_example, first: fingerprint, second: rebuilt_fingerprint}\nendyaml\n/]

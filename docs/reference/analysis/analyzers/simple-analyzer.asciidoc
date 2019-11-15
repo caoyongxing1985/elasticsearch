@@ -1,21 +1,13 @@
 [[analysis-simple-analyzer]]
 === Simple Analyzer
 
-The `simple` analyzer breaks text into terms whenever it encounters a
-character which is not a letter. All terms are lower cased.
+The `simple` analyzer breaks text into terms at any non-letter character, such
+as numbers, spaces, hyphens and apostrophes, discards non-letter characters, 
+and changes uppercase to lowercase.
 
-[float]
-=== Definition
+==== Example
 
-It consists of:
-
-Tokenizer::
-* <<analysis-lowercase-tokenizer,Lower Case Tokenizer>>
-
-[float]
-=== Example output
-
-[source,js]
+[source,console]
 ---------------------------
 POST _analyze
 {
@@ -23,11 +15,10 @@ POST _analyze
   "text": "The 2 QUICK Brown-Foxes jumped over the lazy dog's bone."
 }
 ---------------------------
-// CONSOLE
 
 /////////////////////
 
-[source,js]
+[source,console-result]
 ----------------------------
 {
   "tokens": [
@@ -111,19 +102,52 @@ POST _analyze
   ]
 }
 ----------------------------
-// TESTRESPONSE
 
 /////////////////////
 
 
-The above sentence would produce the following terms:
+The `simple` analyzer parses the sentence and produces the following 
+terms: 
 
 [source,text]
 ---------------------------
 [ the, quick, brown, foxes, jumped, over, the, lazy, dog, s, bone ]
 ---------------------------
 
-[float]
-=== Configuration
+==== Configure parameters
 
-The `simple` analyzer is not configurable.
+The `simple` analyzer does not contain configurable parameters. 
+
+==== Customize
+
+The `simple` analyzer is defined by one tokenizer:
+
+Tokenizer::
+* <<analysis-lowercase-tokenizer,Lower Case Tokenizer>>
+
+To customize the `simple` analyzer, duplicate it to create the basis for 
+a `custom` analyzer. The new analyzer can be modified as required, usually by 
+adding token filters.
+
+===== Example
+
+[source,console]
+----------------------------------------------------
+PUT /simple_example
+{
+  "settings": {
+    "analysis": {
+      "analyzer": {
+        "rebuilt_simple": {
+          "tokenizer": "lowercase",
+          "filter": [         <1>
+          ]
+        }
+      }
+    }
+  }
+}
+----------------------------------------------------
+// TEST[s/\n$/\nstartyaml\n  - compare_analyzers: {index: simple_example, first: simple, second: rebuilt_simple}\nendyaml\n/]
+
+<1> Add token filters here.

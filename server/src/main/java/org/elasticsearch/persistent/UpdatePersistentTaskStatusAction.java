@@ -18,9 +18,9 @@
  */
 package org.elasticsearch.persistent;
 
-import org.elasticsearch.action.Action;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionRequestValidationException;
+import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.master.MasterNodeOperationRequestBuilder;
 import org.elasticsearch.action.support.master.MasterNodeRequest;
@@ -34,52 +34,43 @@ import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
-import org.elasticsearch.persistent.PersistentTasksCustomMetaData.PersistentTask;
 
 import java.io.IOException;
 import java.util.Objects;
 
 import static org.elasticsearch.action.ValidateActions.addValidationError;
 
-public class UpdatePersistentTaskStatusAction extends Action<UpdatePersistentTaskStatusAction.Request,
-        PersistentTaskResponse,
-        UpdatePersistentTaskStatusAction.RequestBuilder> {
+public class UpdatePersistentTaskStatusAction extends ActionType<PersistentTaskResponse> {
 
     public static final UpdatePersistentTaskStatusAction INSTANCE = new UpdatePersistentTaskStatusAction();
     public static final String NAME = "cluster:admin/persistent/update_status";
 
     private UpdatePersistentTaskStatusAction() {
-        super(NAME);
-    }
-
-    @Override
-    public RequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new RequestBuilder(client, this);
-    }
-
-    @Override
-    public PersistentTaskResponse newResponse() {
-        return new PersistentTaskResponse();
+        super(NAME, PersistentTaskResponse::new);
     }
 
     public static class Request extends MasterNodeRequest<Request> {
 
         private String taskId;
         private long allocationId = -1L;
-        private Task.Status status;
+        private PersistentTaskState state;
 
-        public Request() {
+        public Request() {}
 
+        public Request(StreamInput in) throws IOException {
+            super(in);
+            taskId = in.readString();
+            allocationId = in.readLong();
+            state = in.readOptionalNamedWriteable(PersistentTaskState.class);
         }
 
-        public Request(String taskId, long allocationId, Task.Status status) {
+        public Request(String taskId, long allocationId, PersistentTaskState state) {
             this.taskId = taskId;
             this.allocationId = allocationId;
-            this.status = status;
+            this.state = state;
         }
 
         public void setTaskId(String taskId) {
@@ -90,16 +81,8 @@ public class UpdatePersistentTaskStatusAction extends Action<UpdatePersistentTas
             this.allocationId = allocationId;
         }
 
-        public void setStatus(Task.Status status) {
-            this.status = status;
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
-            taskId = in.readString();
-            allocationId = in.readLong();
-            status = in.readOptionalNamedWriteable(Task.Status.class);
+        public void setState(PersistentTaskState state) {
+            this.state = state;
         }
 
         @Override
@@ -107,7 +90,7 @@ public class UpdatePersistentTaskStatusAction extends Action<UpdatePersistentTas
             super.writeTo(out);
             out.writeString(taskId);
             out.writeLong(allocationId);
-            out.writeOptionalNamedWriteable(status);
+            out.writeOptionalNamedWriteable(state);
         }
 
         @Override
@@ -129,13 +112,12 @@ public class UpdatePersistentTaskStatusAction extends Action<UpdatePersistentTas
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
             Request request = (Request) o;
-            return Objects.equals(taskId, request.taskId) && allocationId == request.allocationId &&
-                    Objects.equals(status, request.status);
+            return Objects.equals(taskId, request.taskId) && allocationId == request.allocationId && Objects.equals(state, request.state);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(taskId, allocationId, status);
+            return Objects.hash(taskId, allocationId, state);
         }
     }
 
@@ -151,11 +133,10 @@ public class UpdatePersistentTaskStatusAction extends Action<UpdatePersistentTas
             return this;
         }
 
-        public final RequestBuilder setStatus(Task.Status status) {
-            request.setStatus(status);
+        public final RequestBuilder setState(PersistentTaskState state) {
+            request.setState(state);
             return this;
         }
-
     }
 
     public static class TransportAction extends TransportMasterNodeAction<Request, PersistentTaskResponse> {
@@ -163,12 +144,12 @@ public class UpdatePersistentTaskStatusAction extends Action<UpdatePersistentTas
         private final PersistentTasksClusterService persistentTasksClusterService;
 
         @Inject
-        public TransportAction(Settings settings, TransportService transportService, ClusterService clusterService,
+        public TransportAction(TransportService transportService, ClusterService clusterService,
                                ThreadPool threadPool, ActionFilters actionFilters,
                                PersistentTasksClusterService persistentTasksClusterService,
                                IndexNameExpressionResolver indexNameExpressionResolver) {
-            super(settings, UpdatePersistentTaskStatusAction.NAME, transportService, clusterService, threadPool, actionFilters,
-                    indexNameExpressionResolver, Request::new);
+            super(UpdatePersistentTaskStatusAction.NAME, transportService, clusterService, threadPool, actionFilters,
+                Request::new, indexNameExpressionResolver);
             this.persistentTasksClusterService = persistentTasksClusterService;
         }
 
@@ -178,8 +159,8 @@ public class UpdatePersistentTaskStatusAction extends Action<UpdatePersistentTas
         }
 
         @Override
-        protected PersistentTaskResponse newResponse() {
-            return new PersistentTaskResponse();
+        protected PersistentTaskResponse read(StreamInput in) throws IOException {
+            return new PersistentTaskResponse(in);
         }
 
         @Override
@@ -189,20 +170,12 @@ public class UpdatePersistentTaskStatusAction extends Action<UpdatePersistentTas
         }
 
         @Override
-        protected final void masterOperation(final Request request, ClusterState state,
+        protected final void masterOperation(Task ignoredTask, final Request request,
+                                             final ClusterState state,
                                              final ActionListener<PersistentTaskResponse> listener) {
-            persistentTasksClusterService.updatePersistentTaskStatus(request.taskId, request.allocationId, request.status,
-                    new ActionListener<PersistentTask<?>>() {
-                @Override
-                public void onResponse(PersistentTask<?> task) {
-                    listener.onResponse(new PersistentTaskResponse(task));
-                }
-
-                @Override
-                public void onFailure(Exception e) {
-                    listener.onFailure(e);
-                }
-            });
+            persistentTasksClusterService.updatePersistentTaskState(request.taskId, request.allocationId, request.state,
+                ActionListener.delegateFailure(listener,
+                    (delegatedListener, task) -> delegatedListener.onResponse(new PersistentTaskResponse(task))));
         }
     }
 }

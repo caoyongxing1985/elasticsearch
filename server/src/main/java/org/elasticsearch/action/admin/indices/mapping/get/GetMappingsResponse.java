@@ -20,61 +20,117 @@
 package org.elasticsearch.action.admin.indices.mapping.get;
 
 import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
+import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.cluster.metadata.MappingMetaData;
+import org.elasticsearch.common.ParseField;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.xcontent.ToXContentFragment;
+import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.index.mapper.MapperService;
 
 import java.io.IOException;
 
-public class GetMappingsResponse extends ActionResponse {
+public class GetMappingsResponse extends ActionResponse implements ToXContentFragment {
 
-    private ImmutableOpenMap<String, ImmutableOpenMap<String, MappingMetaData>> mappings = ImmutableOpenMap.of();
+    private static final ParseField MAPPINGS = new ParseField("mappings");
 
-    GetMappingsResponse(ImmutableOpenMap<String, ImmutableOpenMap<String, MappingMetaData>> mappings) {
+    private final ImmutableOpenMap<String, MappingMetaData> mappings;
+
+    public GetMappingsResponse(ImmutableOpenMap<String, MappingMetaData> mappings) {
         this.mappings = mappings;
     }
 
-    GetMappingsResponse() {
-    }
-
-    public ImmutableOpenMap<String, ImmutableOpenMap<String, MappingMetaData>> mappings() {
-        return mappings;
-    }
-
-    public ImmutableOpenMap<String, ImmutableOpenMap<String, MappingMetaData>> getMappings() {
-        return mappings();
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
+    GetMappingsResponse(StreamInput in) throws IOException {
+        super(in);
         int size = in.readVInt();
-        ImmutableOpenMap.Builder<String, ImmutableOpenMap<String, MappingMetaData>> indexMapBuilder = ImmutableOpenMap.builder();
+        ImmutableOpenMap.Builder<String, MappingMetaData> indexMapBuilder = ImmutableOpenMap.builder();
         for (int i = 0; i < size; i++) {
-            String key = in.readString();
-            int valueSize = in.readVInt();
-            ImmutableOpenMap.Builder<String, MappingMetaData> typeMapBuilder = ImmutableOpenMap.builder();
-            for (int j = 0; j < valueSize; j++) {
-                typeMapBuilder.put(in.readString(), new MappingMetaData(in));
+            String index = in.readString();
+            if (in.getVersion().before(Version.V_8_0_0)) {
+                int mappingCount = in.readVInt();
+                assert mappingCount == 1 || mappingCount == 0 : "Expected 0 or 1 mappings but got " + mappingCount;
+                if (mappingCount == 1) {
+                    String type = in.readString();
+                    assert MapperService.SINGLE_MAPPING_NAME.equals(type) : "Expected type [_doc] but got [" + type + "]";
+                    indexMapBuilder.put(index, new MappingMetaData(in));
+                } else {
+                    indexMapBuilder.put(index, MappingMetaData.EMPTY_MAPPINGS);
+                }
+            } else {
+                boolean hasMapping = in.readBoolean();
+                indexMapBuilder.put(index, hasMapping ? new MappingMetaData(in) : MappingMetaData.EMPTY_MAPPINGS);
             }
-            indexMapBuilder.put(key, typeMapBuilder.build());
         }
         mappings = indexMapBuilder.build();
     }
 
+    public ImmutableOpenMap<String, MappingMetaData> mappings() {
+        return mappings;
+    }
+
+    public ImmutableOpenMap<String, MappingMetaData> getMappings() {
+        return mappings();
+    }
+
     @Override
     public void writeTo(StreamOutput out) throws IOException {
-        super.writeTo(out);
         out.writeVInt(mappings.size());
-        for (ObjectObjectCursor<String, ImmutableOpenMap<String, MappingMetaData>> indexEntry : mappings) {
+        for (ObjectObjectCursor<String, MappingMetaData> indexEntry : mappings) {
             out.writeString(indexEntry.key);
-            out.writeVInt(indexEntry.value.size());
-            for (ObjectObjectCursor<String, MappingMetaData> typeEntry : indexEntry.value) {
-                out.writeString(typeEntry.key);
-                typeEntry.value.writeTo(out);
+            if (out.getVersion().before(Version.V_8_0_0)) {
+                out.writeVInt(indexEntry.value == MappingMetaData.EMPTY_MAPPINGS ? 0 : 1);
+                if (indexEntry.value != MappingMetaData.EMPTY_MAPPINGS) {
+                    out.writeString(MapperService.SINGLE_MAPPING_NAME);
+                    indexEntry.value.writeTo(out);
+                }
+            } else {
+                out.writeBoolean(indexEntry.value != MappingMetaData.EMPTY_MAPPINGS);
+                if (indexEntry.value != MappingMetaData.EMPTY_MAPPINGS) {
+                    indexEntry.value.writeTo(out);
+                }
             }
         }
+    }
+
+    @Override
+    public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+        for (final ObjectObjectCursor<String, MappingMetaData> indexEntry : getMappings()) {
+            if (indexEntry.value != null) {
+                builder.startObject(indexEntry.key);
+                builder.field(MAPPINGS.getPreferredName(), indexEntry.value.sourceAsMap());
+                builder.endObject();
+            } else {
+                builder.startObject(MAPPINGS.getPreferredName()).endObject();
+            }
+        }
+        return builder;
+    }
+
+    @Override
+    public String toString() {
+        return Strings.toString(this);
+    }
+
+    @Override
+    public int hashCode() {
+        return mappings.hashCode();
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (obj == null) {
+            return false;
+        }
+
+        if (getClass() != obj.getClass()) {
+            return false;
+        }
+
+        GetMappingsResponse other = (GetMappingsResponse) obj;
+        return this.mappings.equals(other.mappings);
     }
 }

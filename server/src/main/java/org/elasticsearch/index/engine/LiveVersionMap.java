@@ -40,8 +40,9 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
 
     private static final class VersionLookup {
 
-        /** Tracks bytes used by current map, i.e. what is freed on refresh. For deletes, which are also added to tombstones, we only account
-         *  for the CHM entry here, and account for BytesRef/VersionValue against the tombstones, since refresh would not clear this RAM. */
+        /** Tracks bytes used by current map, i.e. what is freed on refresh. For deletes, which are also added to tombstones,
+         *  we only account for the CHM entry here, and account for BytesRef/VersionValue against the tombstones, since refresh would not
+         *  clear this RAM. */
         final AtomicLong ramBytesUsed = new AtomicLong();
 
         private static final VersionLookup EMPTY = new VersionLookup(Collections.emptyMap());
@@ -123,7 +124,8 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         }
 
         Maps() {
-            this(new VersionLookup(ConcurrentCollections.newConcurrentMapWithAggressiveConcurrency()), VersionLookup.EMPTY, false);
+            this(new VersionLookup(ConcurrentCollections.newConcurrentMapWithAggressiveConcurrency()),
+                VersionLookup.EMPTY, false);
         }
 
         boolean isSafeAccessMode() {
@@ -232,7 +234,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
     /**
      * Tracks bytes used by tombstones (deletes)
      */
-    final AtomicLong ramBytesUsedTombstones = new AtomicLong();
+    private final AtomicLong ramBytesUsedTombstones = new AtomicLong();
 
     @Override
     public void beforeRefresh() throws IOException {
@@ -252,8 +254,8 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         // means Lucene did not actually open a new reader because it detected no changes, it's possible old has some entries in it, which
         // is fine: it means they were actually already included in the previously opened reader, so we can still safely drop them in that
         // case.  This is because we assign new maps (in beforeRefresh) slightly before Lucene actually flushes any segments for the
-        // reopen, and so any concurrent indexing requests can still sneak in a few additions to that current map that are in fact reflected
-        // in the previous reader.   We don't touch tombstones here: they expire on their own index.gc_deletes timeframe:
+        // reopen, and so any concurrent indexing requests can still sneak in a few additions to that current map that are in fact
+        // reflected in the previous reader.   We don't touch tombstones here: they expire on their own index.gc_deletes timeframe:
 
         maps = maps.invalidateOldMap();
         assert (unsafeKeysMap = unsafeKeysMap.invalidateOldMap()) != null;
@@ -268,7 +270,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
     }
 
     private VersionValue getUnderLock(final BytesRef uid, Maps currentMaps) {
-        assert keyedLock.isHeldByCurrentThread(uid);
+        assert assertKeyedLockHeldByCurrentThread(uid);
         // First try to get the "live" value:
         VersionValue value = currentMaps.current.get(uid);
         if (value != null) {
@@ -306,44 +308,40 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
     /**
      * Adds this uid/version to the pending adds map iff the map needs safe access.
      */
-    void maybePutUnderLock(BytesRef uid, VersionValue version) {
-        assert keyedLock.isHeldByCurrentThread(uid);
+    void maybePutIndexUnderLock(BytesRef uid, IndexVersionValue version) {
+        assert assertKeyedLockHeldByCurrentThread(uid);
         Maps maps = this.maps;
         if (maps.isSafeAccessMode()) {
-            putUnderLock(uid, version, maps);
+            putIndexUnderLock(uid, version);
         } else {
+            // Even though we don't store a record of the indexing operation (and mark as unsafe),
+            // we should still remove any previous delete for this uuid (avoid accidental accesses).
+            // Not this should not hurt performance because the tombstone is small (or empty) when unsafe is relevant.
+            removeTombstoneUnderLock(uid);
             maps.current.markAsUnsafe();
             assert putAssertionMap(uid, version);
         }
     }
 
-    private boolean putAssertionMap(BytesRef uid, VersionValue version) {
-        putUnderLock(uid, version, unsafeKeysMap);
+    void putIndexUnderLock(BytesRef uid, IndexVersionValue version) {
+        assert assertKeyedLockHeldByCurrentThread(uid);
+        assert uid.bytes.length == uid.length : "Oversized _uid! UID length: " + uid.length + ", bytes length: " + uid.bytes.length;
+        maps.put(uid, version);
+        removeTombstoneUnderLock(uid);
+    }
+
+    private boolean putAssertionMap(BytesRef uid, IndexVersionValue version) {
+        assert assertKeyedLockHeldByCurrentThread(uid);
+        assert uid.bytes.length == uid.length : "Oversized _uid! UID length: " + uid.length + ", bytes length: " + uid.bytes.length;
+        unsafeKeysMap.put(uid, version);
         return true;
     }
 
-    /**
-     * Adds this uid/version to the pending adds map.
-     */
-    void putUnderLock(BytesRef uid, VersionValue version) {
-        Maps maps = this.maps;
-        putUnderLock(uid, version, maps);
-    }
-
-    /**
-     * Adds this uid/version to the pending adds map.
-     */
-    private void putUnderLock(BytesRef uid, VersionValue version, Maps maps) {
-        assert keyedLock.isHeldByCurrentThread(uid);
+    void putDeleteUnderLock(BytesRef uid, DeleteVersionValue version) {
+        assert assertKeyedLockHeldByCurrentThread(uid);
         assert uid.bytes.length == uid.length : "Oversized _uid! UID length: " + uid.length + ", bytes length: " + uid.bytes.length;
-        if (version.isDelete() == false) {
-            maps.put(uid, version);
-            removeTombstoneUnderLock(uid);
-        } else {
-            DeleteVersionValue versionValue = (DeleteVersionValue) version;
-            putTombstone(uid, versionValue);
-            maps.remove(uid, versionValue);
-        }
+        putTombstone(uid, version);
+        maps.remove(uid, version);
     }
 
     private void putTombstone(BytesRef uid, DeleteVersionValue version) {
@@ -365,7 +363,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
      * Removes this uid from the pending deletes map.
      */
     void removeTombstoneUnderLock(BytesRef uid) {
-        assert keyedLock.isHeldByCurrentThread(uid);
+        assert assertKeyedLockHeldByCurrentThread(uid);
         long uidRAMBytesUsed = BASE_BYTES_PER_BYTESREF + uid.bytes.length;
         final VersionValue prev = tombstones.remove(uid);
         if (prev != null) {
@@ -420,8 +418,8 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         maps = new Maps();
         tombstones.clear();
         // NOTE: we can't zero this here, because a refresh thread could be calling InternalEngine.pruneDeletedTombstones at the same time,
-        // and this will lead to an assert trip.  Presumably it's fine if our ramBytesUsedTombstones is non-zero after clear since the index
-        // is being closed:
+        // and this will lead to an assert trip.  Presumably it's fine if our ramBytesUsedTombstones is non-zero after clear since the
+        // index is being closed:
         //ramBytesUsedTombstones.set(0);
     }
 
@@ -438,6 +436,14 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         return maps.current.ramBytesUsed.get();
     }
 
+    /**
+     * Returns how much RAM is current being freed up by refreshing.  This is {@link #ramBytesUsed()}
+     * except does not include tombstones because they don't clear on refresh.
+     */
+    long getRefreshingBytes() {
+        return maps.old.ramBytesUsed.get();
+    }
+
     @Override
     public Collection<Accountable> getChildResources() {
         // TODO: useful to break down RAM usage here?
@@ -451,7 +457,8 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         return maps.current.map;
     }
 
-    /** Iterates over all deleted versions, including new ones (not yet exposed via reader) and old ones (exposed via reader but not yet GC'd). */
+    /** Iterates over all deleted versions, including new ones (not yet exposed via reader) and old ones
+     *  (exposed via reader but not yet GC'd). */
     Map<BytesRef, DeleteVersionValue> getAllTombstones() {
         return tombstones;
     }
@@ -464,5 +471,11 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
      */
     Releasable acquireLock(BytesRef uid) {
         return keyedLock.acquire(uid);
+    }
+
+    boolean assertKeyedLockHeldByCurrentThread(BytesRef uid) {
+        assert keyedLock.isHeldByCurrentThread(uid) : "Thread [" + Thread.currentThread().getName() +
+            "], uid [" + uid.utf8ToString() + "]";
+        return true;
     }
 }

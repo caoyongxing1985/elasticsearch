@@ -49,10 +49,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
-import java.util.Set;
 import java.util.concurrent.ExecutionException;
 
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
@@ -65,10 +63,8 @@ public class SearchWithRandomExceptionsIT extends ESIntegTestCase {
     }
 
     @Override
-    protected Collection<Class<? extends Plugin>> getMockPlugins() {
-        Set<Class<? extends Plugin>> mocks = new HashSet<>(super.getMockPlugins());
-        mocks.remove(MockEngineFactoryPlugin.class);
-        return mocks;
+    protected boolean addMockInternalEngine() {
+        return false;
     }
 
     public void testRandomExceptions() throws IOException, InterruptedException, ExecutionException {
@@ -118,7 +114,8 @@ public class SearchWithRandomExceptionsIT extends ESIntegTestCase {
         boolean[] added = new boolean[numDocs];
         for (int i = 0; i < numDocs; i++) {
             try {
-                IndexResponse indexResponse = client().prepareIndex("test", "type", "" + i).setTimeout(TimeValue.timeValueSeconds(1)).setSource("test", English.intToEnglish(i)).get();
+                IndexResponse indexResponse = client().prepareIndex("test").setId("" + i)
+                        .setTimeout(TimeValue.timeValueSeconds(1)).setSource("test", English.intToEnglish(i)).get();
                 if (indexResponse.getResult() == DocWriteResponse.Result.CREATED) {
                     numCreated++;
                     added[i] = true;
@@ -127,9 +124,12 @@ public class SearchWithRandomExceptionsIT extends ESIntegTestCase {
             }
         }
         logger.info("Start Refresh");
-        RefreshResponse refreshResponse = client().admin().indices().prepareRefresh("test").execute().get(); // don't assert on failures here
+        // don't assert on failures here
+        RefreshResponse refreshResponse = client().admin().indices().prepareRefresh("test").execute().get();
         final boolean refreshFailed = refreshResponse.getShardFailures().length != 0 || refreshResponse.getFailedShards() != 0;
-        logger.info("Refresh failed [{}] numShardsFailed: [{}], shardFailuresLength: [{}], successfulShards: [{}], totalShards: [{}] ", refreshFailed, refreshResponse.getFailedShards(), refreshResponse.getShardFailures().length, refreshResponse.getSuccessfulShards(), refreshResponse.getTotalShards());
+        logger.info("Refresh failed [{}] numShardsFailed: [{}], shardFailuresLength: [{}], successfulShards: [{}], totalShards: [{}] ",
+                refreshFailed, refreshResponse.getFailedShards(), refreshResponse.getShardFailures().length,
+                refreshResponse.getSuccessfulShards(), refreshResponse.getTotalShards());
 
         NumShards test = getNumShards("test");
         final int numSearches = scaledRandomIntBetween(100, 200);
@@ -139,14 +139,16 @@ public class SearchWithRandomExceptionsIT extends ESIntegTestCase {
                 int docToQuery = between(0, numDocs - 1);
                 int expectedResults = added[docToQuery] ? 1 : 0;
                 logger.info("Searching for [test:{}]", English.intToEnglish(docToQuery));
-                SearchResponse searchResponse = client().prepareSearch().setQuery(QueryBuilders.matchQuery("test", English.intToEnglish(docToQuery)))
+                SearchResponse searchResponse = client().prepareSearch()
+                        .setQuery(QueryBuilders.matchQuery("test", English.intToEnglish(docToQuery)))
                         .setSize(expectedResults).get();
                 logger.info("Successful shards: [{}]  numShards: [{}]", searchResponse.getSuccessfulShards(), test.numPrimaries);
                 if (searchResponse.getSuccessfulShards() == test.numPrimaries && !refreshFailed) {
                     assertResultsAndLogOnFailure(expectedResults, searchResponse);
                 }
                 // check match all
-                searchResponse = client().prepareSearch().setQuery(QueryBuilders.matchAllQuery()).setSize(numCreated).addSort("_id", SortOrder.ASC).get();
+                searchResponse = client().prepareSearch().setQuery(QueryBuilders.matchAllQuery()).setSize(numCreated)
+                        .addSort("_id", SortOrder.ASC).get();
                 logger.info("Match all Successful shards: [{}]  numShards: [{}]", searchResponse.getSuccessfulShards(), test.numPrimaries);
                 if (searchResponse.getSuccessfulShards() == test.numPrimaries && !refreshFailed) {
                     assertResultsAndLogOnFailure(numCreated, searchResponse);

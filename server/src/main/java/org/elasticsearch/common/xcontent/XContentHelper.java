@@ -22,6 +22,7 @@ package org.elasticsearch.common.xcontent;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.compress.Compressor;
@@ -42,7 +43,8 @@ public class XContentHelper {
 
     /**
      * Creates a parser based on the bytes provided
-     * @deprecated use {@link #createParser(NamedXContentRegistry, DeprecationHandler, BytesReference, XContentType)} to avoid content type auto-detection
+     * @deprecated use {@link #createParser(NamedXContentRegistry, DeprecationHandler, BytesReference, XContentType)}
+     * to avoid content type auto-detection
      */
     @Deprecated
     public static XContentParser createParser(NamedXContentRegistry xContentRegistry, DeprecationHandler deprecationHandler,
@@ -109,7 +111,8 @@ public class XContentHelper {
             }
             contentType = xContentType != null ? xContentType : XContentFactory.xContentType(input);
             try (InputStream stream = input) {
-                return new Tuple<>(Objects.requireNonNull(contentType), convertToMap(XContentFactory.xContent(contentType), stream, ordered));
+                return new Tuple<>(Objects.requireNonNull(contentType),
+                    convertToMap(XContentFactory.xContent(contentType), stream, ordered));
             }
         } catch (IOException e) {
             throw new ElasticsearchParseException("Failed to parse content to map", e);
@@ -157,6 +160,19 @@ public class XContentHelper {
 
     public static String convertToJson(BytesReference bytes, boolean reformatJson, XContentType xContentType) throws IOException {
         return convertToJson(bytes, reformatJson, false, xContentType);
+    }
+
+    /**
+     * Accepts a JSON string, parses it and prints it without pretty-printing it. This is useful
+     * where a piece of JSON is formatted for legibility, but needs to be stripped of unnecessary
+     * whitespace e.g. for comparison in a test.
+     *
+     * @param json the JSON to format
+     * @return reformatted JSON
+     * @throws IOException if the reformatting fails, e.g. because the JSON is not well-formed
+     */
+    public static String stripWhitespace(String json) throws IOException {
+        return convertToJson(new BytesArray(json), true, XContentType.JSON);
     }
 
     public static String convertToJson(BytesReference bytes, boolean reformatJson, boolean prettyPrint, XContentType xContentType)
@@ -294,7 +310,8 @@ public class XContentHelper {
      * auto-detection
      */
     @Deprecated
-    public static void writeRawField(String field, BytesReference source, XContentBuilder builder, ToXContent.Params params) throws IOException {
+    public static void writeRawField(String field, BytesReference source, XContentBuilder builder,
+                                     ToXContent.Params params) throws IOException {
         Compressor compressor = CompressorFactory.compressor(source);
         if (compressor != null) {
             try (InputStream compressedStreamInput = compressor.streamInput(source.streamInput())) {
@@ -340,7 +357,8 @@ public class XContentHelper {
      * {@link XContentType}. Wraps the output into a new anonymous object according to the value returned
      * by the {@link ToXContent#isFragment()} method returns.
      */
-    public static BytesReference toXContent(ToXContent toXContent, XContentType xContentType, Params params, boolean humanReadable) throws IOException {
+    public static BytesReference toXContent(ToXContent toXContent, XContentType xContentType, Params params,
+                                            boolean humanReadable) throws IOException {
         try (XContentBuilder builder = XContentBuilder.builder(xContentType.xContent())) {
             builder.humanReadable(humanReadable);
             if (toXContent.isFragment()) {

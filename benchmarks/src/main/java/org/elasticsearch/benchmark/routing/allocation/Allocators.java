@@ -22,6 +22,7 @@ import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterModule;
 import org.elasticsearch.cluster.EmptyClusterInfoService;
 import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.cluster.node.DiscoveryNodeRole;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.cluster.routing.allocation.AllocationService;
 import org.elasticsearch.cluster.routing.allocation.FailedShard;
@@ -45,10 +46,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class Allocators {
     private static class NoopGatewayAllocator extends GatewayAllocator {
         public static final NoopGatewayAllocator INSTANCE = new NoopGatewayAllocator();
-
-        protected NoopGatewayAllocator() {
-            super(Settings.EMPTY);
-        }
 
         @Override
         public void applyStartedShards(RoutingAllocation allocation, List<ShardRouting> startedShards) {
@@ -79,7 +76,7 @@ public final class Allocators {
 
     public static AllocationService createAllocationService(Settings settings, ClusterSettings clusterSettings) throws
         InvocationTargetException, NoSuchMethodException, InstantiationException, IllegalAccessException {
-        return new AllocationService(settings,
+        return new AllocationService(
             defaultAllocationDeciders(settings, clusterSettings),
             NoopGatewayAllocator.INSTANCE, new BalancedShardsAllocator(settings), EmptyClusterInfoService.INSTANCE);
     }
@@ -88,7 +85,7 @@ public final class Allocators {
         IllegalAccessException, InvocationTargetException, InstantiationException, NoSuchMethodException {
         Collection<AllocationDecider> deciders =
             ClusterModule.createAllocationDeciders(settings, clusterSettings, Collections.emptyList());
-        return new AllocationDeciders(settings, deciders);
+        return new AllocationDeciders(deciders);
 
     }
 
@@ -96,7 +93,7 @@ public final class Allocators {
 
     public static DiscoveryNode newNode(String nodeId, Map<String, String> attributes) {
         return new DiscoveryNode("", nodeId, new TransportAddress(TransportAddress.META_ADDRESS,
-            portGenerator.incrementAndGet()), attributes, Sets.newHashSet(DiscoveryNode.Role.MASTER,
-            DiscoveryNode.Role.DATA), Version.CURRENT);
+            portGenerator.incrementAndGet()), attributes, Sets.newHashSet(DiscoveryNodeRole.MASTER_ROLE,
+            DiscoveryNodeRole.DATA_ROLE), Version.CURRENT);
     }
 }

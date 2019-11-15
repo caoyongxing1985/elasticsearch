@@ -18,12 +18,15 @@
  */
 package org.elasticsearch.action.admin.indices.shards;
 
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.util.CollectionUtil;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.FailedNodeException;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.master.TransportMasterNodeReadAction;
+import org.elasticsearch.action.support.nodes.BaseNodesResponse;
+import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
@@ -41,15 +44,18 @@ import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.collect.ImmutableOpenIntMap;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.util.concurrent.CountDown;
 import org.elasticsearch.gateway.AsyncShardFetch;
+import org.elasticsearch.gateway.AsyncShardFetch.Lister;
 import org.elasticsearch.gateway.TransportNodesListGatewayStartedShards;
 import org.elasticsearch.gateway.TransportNodesListGatewayStartedShards.NodeGatewayStartedShards;
 import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -59,18 +65,23 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
- * Transport action that reads the cluster state for shards with the requested criteria (see {@link ClusterHealthStatus}) of specific indices
- * and fetches store information from all the nodes using {@link TransportNodesListGatewayStartedShards}
+ * Transport action that reads the cluster state for shards with the requested criteria (see {@link ClusterHealthStatus}) of specific
+ * indices and fetches store information from all the nodes using {@link TransportNodesListGatewayStartedShards}
  */
-public class TransportIndicesShardStoresAction extends TransportMasterNodeReadAction<IndicesShardStoresRequest, IndicesShardStoresResponse> {
+public class TransportIndicesShardStoresAction
+        extends TransportMasterNodeReadAction<IndicesShardStoresRequest, IndicesShardStoresResponse> {
 
-    private final TransportNodesListGatewayStartedShards listShardStoresInfo;
+    private static final Logger logger = LogManager.getLogger(TransportIndicesShardStoresAction.class);
+
+    private final NodeClient client;
 
     @Inject
-    public TransportIndicesShardStoresAction(Settings settings, TransportService transportService, ClusterService clusterService, ThreadPool threadPool, ActionFilters actionFilters,
-                                             IndexNameExpressionResolver indexNameExpressionResolver, TransportNodesListGatewayStartedShards listShardStoresInfo) {
-        super(settings, IndicesShardStoresAction.NAME, transportService, clusterService, threadPool, actionFilters, IndicesShardStoresRequest::new, indexNameExpressionResolver);
-        this.listShardStoresInfo = listShardStoresInfo;
+    public TransportIndicesShardStoresAction(TransportService transportService, ClusterService clusterService,
+                                             ThreadPool threadPool, ActionFilters actionFilters,
+                                             IndexNameExpressionResolver indexNameExpressionResolver, NodeClient client) {
+        super(IndicesShardStoresAction.NAME, transportService, clusterService, threadPool, actionFilters,
+            IndicesShardStoresRequest::new, indexNameExpressionResolver);
+        this.client = client;
     }
 
     @Override
@@ -79,12 +90,13 @@ public class TransportIndicesShardStoresAction extends TransportMasterNodeReadAc
     }
 
     @Override
-    protected IndicesShardStoresResponse newResponse() {
-        return new IndicesShardStoresResponse();
+    protected IndicesShardStoresResponse read(StreamInput in) throws IOException {
+        return new IndicesShardStoresResponse(in);
     }
 
     @Override
-    protected void masterOperation(IndicesShardStoresRequest request, ClusterState state, ActionListener<IndicesShardStoresResponse> listener) {
+    protected void masterOperation(Task task, IndicesShardStoresRequest request, ClusterState state,
+                                   ActionListener<IndicesShardStoresResponse> listener) {
         final RoutingTable routingTables = state.routingTable();
         final RoutingNodes routingNodes = state.getRoutingNodes();
         final String[] concreteIndices = indexNameExpressionResolver.concreteIndexNames(state, request);
@@ -116,7 +128,8 @@ public class TransportIndicesShardStoresAction extends TransportMasterNodeReadAc
 
     @Override
     protected ClusterBlockException checkBlock(IndicesShardStoresRequest request, ClusterState state) {
-        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA_READ, indexNameExpressionResolver.concreteIndexNames(state, request));
+        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA_READ,
+            indexNameExpressionResolver.concreteIndexNames(state, request));
     }
 
     private class AsyncShardStoresInfoFetches {
@@ -127,7 +140,8 @@ public class TransportIndicesShardStoresAction extends TransportMasterNodeReadAc
         private CountDown expectedOps;
         private final Queue<InternalAsyncFetch.Response> fetchResponses;
 
-        AsyncShardStoresInfoFetches(DiscoveryNodes nodes, RoutingNodes routingNodes, Set<ShardId> shardIds, ActionListener<IndicesShardStoresResponse> listener) {
+        AsyncShardStoresInfoFetches(DiscoveryNodes nodes, RoutingNodes routingNodes, Set<ShardId> shardIds,
+                                    ActionListener<IndicesShardStoresResponse> listener) {
             this.nodes = nodes;
             this.routingNodes = routingNodes;
             this.shardIds = shardIds;
@@ -140,21 +154,32 @@ public class TransportIndicesShardStoresAction extends TransportMasterNodeReadAc
             if (shardIds.isEmpty()) {
                 listener.onResponse(new IndicesShardStoresResponse());
             } else {
+                // explicitely type lister, some IDEs (Eclipse) are not able to correctly infer the function type
+                Lister<BaseNodesResponse<NodeGatewayStartedShards>, NodeGatewayStartedShards> lister = this::listStartedShards;
                 for (ShardId shardId : shardIds) {
-                    InternalAsyncFetch fetch = new InternalAsyncFetch(logger, "shard_stores", shardId, listShardStoresInfo);
+                    InternalAsyncFetch fetch = new InternalAsyncFetch(logger, "shard_stores", shardId, lister);
                     fetch.fetchData(nodes, Collections.<String>emptySet());
                 }
             }
         }
 
+        private void listStartedShards(ShardId shardId, DiscoveryNode[] nodes,
+                                       ActionListener<BaseNodesResponse<NodeGatewayStartedShards>> listener) {
+            var request = new TransportNodesListGatewayStartedShards.Request(shardId, nodes);
+            client.executeLocally(TransportNodesListGatewayStartedShards.TYPE, request,
+                ActionListener.wrap(listener::onResponse, listener::onFailure));
+        }
+
         private class InternalAsyncFetch extends AsyncShardFetch<NodeGatewayStartedShards> {
 
-            InternalAsyncFetch(Logger logger, String type, ShardId shardId, TransportNodesListGatewayStartedShards action) {
+            InternalAsyncFetch(Logger logger, String type, ShardId shardId,
+                               Lister<? extends BaseNodesResponse<NodeGatewayStartedShards>, NodeGatewayStartedShards> action) {
                 super(logger, type, shardId, action);
             }
 
             @Override
-            protected synchronized void processAsyncFetch(List<NodeGatewayStartedShards> responses, List<FailedNodeException> failures, long fetchingRound) {
+            protected synchronized void processAsyncFetch(List<NodeGatewayStartedShards> responses, List<FailedNodeException> failures,
+                                                          long fetchingRound) {
                 fetchResponses.add(new Response(shardId, responses, failures));
                 if (expectedOps.countDown()) {
                     finish();
@@ -162,37 +187,46 @@ public class TransportIndicesShardStoresAction extends TransportMasterNodeReadAc
             }
 
             void finish() {
-                ImmutableOpenMap.Builder<String, ImmutableOpenIntMap<java.util.List<IndicesShardStoresResponse.StoreStatus>>> indicesStoreStatusesBuilder = ImmutableOpenMap.builder();
+                ImmutableOpenMap.Builder<String, ImmutableOpenIntMap<java.util.List<IndicesShardStoresResponse.StoreStatus>>>
+                    indicesStoreStatusesBuilder = ImmutableOpenMap.builder();
+
                 java.util.List<IndicesShardStoresResponse.Failure> failureBuilder = new ArrayList<>();
                 for (Response fetchResponse : fetchResponses) {
-                    ImmutableOpenIntMap<java.util.List<IndicesShardStoresResponse.StoreStatus>> indexStoreStatuses = indicesStoreStatusesBuilder.get(fetchResponse.shardId.getIndexName());
+                    ImmutableOpenIntMap<java.util.List<IndicesShardStoresResponse.StoreStatus>> indexStoreStatuses =
+                        indicesStoreStatusesBuilder.get(fetchResponse.shardId.getIndexName());
                     final ImmutableOpenIntMap.Builder<java.util.List<IndicesShardStoresResponse.StoreStatus>> indexShardsBuilder;
                     if (indexStoreStatuses == null) {
                         indexShardsBuilder = ImmutableOpenIntMap.builder();
                     } else {
                         indexShardsBuilder = ImmutableOpenIntMap.builder(indexStoreStatuses);
                     }
-                    java.util.List<IndicesShardStoresResponse.StoreStatus> storeStatuses = indexShardsBuilder.get(fetchResponse.shardId.id());
+                    java.util.List<IndicesShardStoresResponse.StoreStatus> storeStatuses = indexShardsBuilder
+                        .get(fetchResponse.shardId.id());
                     if (storeStatuses == null) {
                         storeStatuses = new ArrayList<>();
                     }
                     for (NodeGatewayStartedShards response : fetchResponse.responses) {
                         if (shardExistsInNode(response)) {
-                            IndicesShardStoresResponse.StoreStatus.AllocationStatus allocationStatus = getAllocationStatus(fetchResponse.shardId.getIndexName(), fetchResponse.shardId.id(), response.getNode());
-                            storeStatuses.add(new IndicesShardStoresResponse.StoreStatus(response.getNode(), response.allocationId(), allocationStatus, response.storeException()));
+                            IndicesShardStoresResponse.StoreStatus.AllocationStatus allocationStatus = getAllocationStatus(
+                                fetchResponse.shardId.getIndexName(), fetchResponse.shardId.id(), response.getNode());
+                            storeStatuses.add(new IndicesShardStoresResponse.StoreStatus(response.getNode(), response.allocationId(),
+                                allocationStatus, response.storeException()));
                         }
                     }
                     CollectionUtil.timSort(storeStatuses);
                     indexShardsBuilder.put(fetchResponse.shardId.id(), storeStatuses);
                     indicesStoreStatusesBuilder.put(fetchResponse.shardId.getIndexName(), indexShardsBuilder.build());
                     for (FailedNodeException failure : fetchResponse.failures) {
-                        failureBuilder.add(new IndicesShardStoresResponse.Failure(failure.nodeId(), fetchResponse.shardId.getIndexName(), fetchResponse.shardId.id(), failure.getCause()));
+                        failureBuilder.add(new IndicesShardStoresResponse.Failure(failure.nodeId(), fetchResponse.shardId.getIndexName(),
+                            fetchResponse.shardId.id(), failure.getCause()));
                     }
                 }
-                listener.onResponse(new IndicesShardStoresResponse(indicesStoreStatusesBuilder.build(), Collections.unmodifiableList(failureBuilder)));
+                listener.onResponse(new IndicesShardStoresResponse(indicesStoreStatusesBuilder.build(),
+                    Collections.unmodifiableList(failureBuilder)));
             }
 
-            private IndicesShardStoresResponse.StoreStatus.AllocationStatus getAllocationStatus(String index, int shardID, DiscoveryNode node) {
+            private IndicesShardStoresResponse.StoreStatus.AllocationStatus getAllocationStatus(String index, int shardID,
+                                                                                                DiscoveryNode node) {
                 for (ShardRouting shardRouting : routingNodes.node(node.getId())) {
                     ShardId shardId = shardRouting.shardId();
                     if (shardId.id() == shardID && shardId.getIndexName().equals(index)) {

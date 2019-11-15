@@ -24,10 +24,10 @@ import org.elasticsearch.common.ParsingException;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
-import org.elasticsearch.common.xcontent.ToXContent.Params;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
+import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.query.TermsQueryBuilder;
 
 import java.io.IOException;
@@ -38,17 +38,13 @@ import java.util.Objects;
  */
 public class TermsLookup implements Writeable, ToXContentFragment {
     private final String index;
-    private final String type;
     private final String id;
     private final String path;
     private String routing;
 
-    public TermsLookup(String index, String type, String id, String path) {
+    public TermsLookup(String index, String id, String path) {
         if (id == null) {
             throw new IllegalArgumentException("[" + TermsQueryBuilder.NAME + "] query lookup element requires specifying the id.");
-        }
-        if (type == null) {
-            throw new IllegalArgumentException("[" + TermsQueryBuilder.NAME + "] query lookup element requires specifying the type.");
         }
         if (path == null) {
             throw new IllegalArgumentException("[" + TermsQueryBuilder.NAME + "] query lookup element requires specifying the path.");
@@ -57,7 +53,6 @@ public class TermsLookup implements Writeable, ToXContentFragment {
             throw new IllegalArgumentException("[" + TermsQueryBuilder.NAME + "] query lookup element requires specifying the index.");
         }
         this.index = index;
-        this.type = type;
         this.id = id;
         this.path = path;
     }
@@ -66,39 +61,28 @@ public class TermsLookup implements Writeable, ToXContentFragment {
      * Read from a stream.
      */
     public TermsLookup(StreamInput in) throws IOException {
-        type = in.readString();
+        if (in.getVersion().before(Version.V_8_0_0)) {
+            in.readOptionalString();
+        }
         id = in.readString();
         path = in.readString();
-        if (in.getVersion().onOrAfter(Version.V_6_0_0_beta1)) {
-            index = in.readString();
-        } else {
-            index = in.readOptionalString();
-            if (index == null) {
-                throw new IllegalStateException("index must not be null in a terms lookup");
-            }
-        }
+        index = in.readString();
         routing = in.readOptionalString();
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
-        out.writeString(type);
+        if (out.getVersion().before(Version.V_8_0_0)) {
+            out.writeOptionalString(MapperService.SINGLE_MAPPING_NAME);
+        }
         out.writeString(id);
         out.writeString(path);
-        if (out.getVersion().onOrAfter(Version.V_6_0_0_beta1)) {
-            out.writeString(index);
-        } else {
-            out.writeOptionalString(index);
-        }
+        out.writeString(index);
         out.writeOptionalString(routing);
     }
 
     public String index() {
         return index;
-    }
-
-    public String type() {
-        return type;
     }
 
     public String id() {
@@ -120,7 +104,6 @@ public class TermsLookup implements Writeable, ToXContentFragment {
 
     public static TermsLookup parseTermsLookup(XContentParser parser) throws IOException {
         String index = null;
-        String type = null;
         String id = null;
         String path = null;
         String routing = null;
@@ -133,9 +116,6 @@ public class TermsLookup implements Writeable, ToXContentFragment {
                 switch (currentFieldName) {
                 case "index":
                     index = parser.text();
-                    break;
-                case "type":
-                    type = parser.text();
                     break;
                 case "id":
                     id = parser.text();
@@ -155,18 +135,17 @@ public class TermsLookup implements Writeable, ToXContentFragment {
                     + token + "] after [" + currentFieldName + "]");
             }
         }
-        return new TermsLookup(index, type, id, path).routing(routing);
+        return new TermsLookup(index, id, path).routing(routing);
     }
 
     @Override
     public String toString() {
-        return index + "/" + type + "/" + id + "/" + path;
+        return index + "/" + id + "/" + path;
     }
 
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.field("index", index);
-        builder.field("type", type);
         builder.field("id", id);
         builder.field("path", path);
         if (routing != null) {
@@ -177,7 +156,7 @@ public class TermsLookup implements Writeable, ToXContentFragment {
 
     @Override
     public int hashCode() {
-        return Objects.hash(index, type, id, path, routing);
+        return Objects.hash(index, id, path, routing);
     }
 
     @Override
@@ -190,7 +169,6 @@ public class TermsLookup implements Writeable, ToXContentFragment {
         }
         TermsLookup other = (TermsLookup) obj;
         return Objects.equals(index, other.index) &&
-                Objects.equals(type, other.type) &&
                 Objects.equals(id, other.id) &&
                 Objects.equals(path, other.path) &&
                 Objects.equals(routing, other.routing);

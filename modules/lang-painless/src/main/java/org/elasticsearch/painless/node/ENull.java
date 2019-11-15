@@ -19,11 +19,14 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
+import org.elasticsearch.painless.ClassWriter;
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
+import org.elasticsearch.painless.ScriptRoot;
+import org.elasticsearch.painless.lookup.PainlessLookupUtility;
 import org.objectweb.asm.Opcodes;
 
 import java.util.Set;
@@ -38,12 +41,17 @@ public final class ENull extends AExpression {
     }
 
     @Override
+    void storeSettings(CompilerSettings settings) {
+        // do nothing
+    }
+
+    @Override
     void extractVariables(Set<String> variables) {
         // Do nothing.
     }
 
     @Override
-    void analyze(Locals locals) {
+    void analyze(ScriptRoot scriptRoot, Locals locals) {
         if (!read) {
             throw createError(new IllegalArgumentException("Must read from null constant."));
         }
@@ -53,7 +61,7 @@ public final class ENull extends AExpression {
         if (expected != null) {
             if (expected.isPrimitive()) {
                 throw createError(new IllegalArgumentException(
-                    "Cannot cast null to a primitive type [" + Definition.ClassToName(expected) + "]."));
+                    "Cannot cast null to a primitive type [" + PainlessLookupUtility.typeToCanonicalTypeName(expected) + "]."));
             }
 
             actual = expected;
@@ -63,8 +71,8 @@ public final class ENull extends AExpression {
     }
 
     @Override
-    void write(MethodWriter writer, Globals globals) {
-        writer.visitInsn(Opcodes.ACONST_NULL);
+    void write(ClassWriter classWriter, MethodWriter methodWriter, Globals globals) {
+        methodWriter.visitInsn(Opcodes.ACONST_NULL);
     }
 
     @Override

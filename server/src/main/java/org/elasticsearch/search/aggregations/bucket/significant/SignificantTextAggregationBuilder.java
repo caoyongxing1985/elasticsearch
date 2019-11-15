@@ -22,18 +22,17 @@ package org.elasticsearch.search.aggregations.bucket.significant;
 import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
 import org.elasticsearch.common.xcontent.ObjectParser;
 import org.elasticsearch.common.xcontent.ParseFieldRegistry;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.query.AbstractQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
+import org.elasticsearch.index.query.QueryShardContext;
 import org.elasticsearch.search.aggregations.AbstractAggregationBuilder;
 import org.elasticsearch.search.aggregations.AggregationBuilder;
 import org.elasticsearch.search.aggregations.AggregationInitializationException;
 import org.elasticsearch.search.aggregations.Aggregator;
-import org.elasticsearch.search.aggregations.AggregatorFactories;
 import org.elasticsearch.search.aggregations.AggregatorFactories.Builder;
 import org.elasticsearch.search.aggregations.AggregatorFactory;
 import org.elasticsearch.search.aggregations.bucket.significant.heuristics.SignificanceHeuristic;
@@ -42,7 +41,6 @@ import org.elasticsearch.search.aggregations.bucket.terms.IncludeExclude;
 import org.elasticsearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
 import org.elasticsearch.search.aggregations.bucket.terms.TermsAggregator;
 import org.elasticsearch.search.aggregations.bucket.terms.TermsAggregator.BucketCountThresholds;
-import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -342,16 +340,13 @@ public class SignificantTextAggregationBuilder extends AbstractAggregationBuilde
     }
 
     @Override
-    protected AggregatorFactory<?> doBuild(SearchContext context, AggregatorFactory<?> parent,
-            Builder subFactoriesBuilder) throws IOException {
-        SignificanceHeuristic executionHeuristic = this.significanceHeuristic.rewrite(context);
-        String[] execFieldNames = sourceFieldNames;
-        if (execFieldNames == null) {
-            execFieldNames = new String[] { fieldName };
-        }
+    protected AggregatorFactory doBuild(QueryShardContext queryShardContext, AggregatorFactory parent,
+                                        Builder subFactoriesBuilder) throws IOException {
+        SignificanceHeuristic executionHeuristic = this.significanceHeuristic.rewrite(queryShardContext);
+
         return new SignificantTextAggregatorFactory(name, includeExclude, filterBuilder,
-                bucketCountThresholds, executionHeuristic, context, parent, subFactoriesBuilder,
-                fieldName, execFieldNames, filterDuplicateText, metaData);
+                bucketCountThresholds, executionHeuristic, queryShardContext, parent, subFactoriesBuilder,
+                fieldName, sourceFieldNames, filterDuplicateText, metaData);
     }
 
     @Override
@@ -383,13 +378,17 @@ public class SignificantTextAggregationBuilder extends AbstractAggregationBuilde
     }
 
     @Override
-    protected int doHashCode() {
-        return Objects.hash(bucketCountThresholds, fieldName, filterDuplicateText, filterBuilder,
-                includeExclude, significanceHeuristic, Arrays.hashCode(sourceFieldNames));
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), bucketCountThresholds, fieldName,
+            filterDuplicateText, filterBuilder,
+            includeExclude, significanceHeuristic, Arrays.hashCode(sourceFieldNames));
     }
 
     @Override
-    protected boolean doEquals(Object obj) {
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        if (super.equals(obj) == false) return false;
         SignificantTextAggregationBuilder other = (SignificantTextAggregationBuilder) obj;
         return Objects.equals(bucketCountThresholds, other.bucketCountThresholds)
                 && Objects.equals(fieldName, other.fieldName)

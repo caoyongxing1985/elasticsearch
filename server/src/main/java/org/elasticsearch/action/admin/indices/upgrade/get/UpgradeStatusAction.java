@@ -19,25 +19,14 @@
 
 package org.elasticsearch.action.admin.indices.upgrade.get;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class UpgradeStatusAction extends Action<UpgradeStatusRequest, UpgradeStatusResponse, UpgradeStatusRequestBuilder> {
+public class UpgradeStatusAction extends ActionType<UpgradeStatusResponse> {
 
     public static final UpgradeStatusAction INSTANCE = new UpgradeStatusAction();
     public static final String NAME = "indices:monitor/upgrade";
 
     private UpgradeStatusAction() {
-        super(NAME);
-    }
-
-    @Override
-    public UpgradeStatusResponse newResponse() {
-        return new UpgradeStatusResponse();
-    }
-
-    @Override
-    public UpgradeStatusRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new UpgradeStatusRequestBuilder(client, this);
+        super(NAME, UpgradeStatusResponse::new);
     }
 }

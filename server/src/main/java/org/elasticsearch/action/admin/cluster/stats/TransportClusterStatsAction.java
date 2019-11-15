@@ -19,6 +19,7 @@
 
 package org.elasticsearch.action.admin.cluster.stats;
 
+import org.apache.lucene.store.AlreadyClosedException;
 import org.elasticsearch.action.FailedNodeException;
 import org.elasticsearch.action.admin.cluster.node.info.NodeInfo;
 import org.elasticsearch.action.admin.cluster.node.stats.NodeStats;
@@ -30,16 +31,18 @@ import org.elasticsearch.action.support.nodes.BaseNodeRequest;
 import org.elasticsearch.action.support.nodes.TransportNodesAction;
 import org.elasticsearch.cluster.health.ClusterHealthStatus;
 import org.elasticsearch.cluster.health.ClusterStateHealth;
-import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.IndexService;
+import org.elasticsearch.index.engine.CommitStats;
+import org.elasticsearch.index.seqno.RetentionLeaseStats;
+import org.elasticsearch.index.seqno.SeqNoStats;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.node.NodeService;
+import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
@@ -51,20 +54,18 @@ public class TransportClusterStatsAction extends TransportNodesAction<ClusterSta
         TransportClusterStatsAction.ClusterStatsNodeRequest, ClusterStatsNodeResponse> {
 
     private static final CommonStatsFlags SHARD_STATS_FLAGS = new CommonStatsFlags(CommonStatsFlags.Flag.Docs, CommonStatsFlags.Flag.Store,
-            CommonStatsFlags.Flag.FieldData, CommonStatsFlags.Flag.QueryCache, CommonStatsFlags.Flag.Completion, CommonStatsFlags.Flag.Segments);
+        CommonStatsFlags.Flag.FieldData, CommonStatsFlags.Flag.QueryCache,
+        CommonStatsFlags.Flag.Completion, CommonStatsFlags.Flag.Segments);
 
     private final NodeService nodeService;
     private final IndicesService indicesService;
 
 
     @Inject
-    public TransportClusterStatsAction(Settings settings, ThreadPool threadPool,
-                                       ClusterService clusterService, TransportService transportService,
-                                       NodeService nodeService, IndicesService indicesService,
-                                       ActionFilters actionFilters, IndexNameExpressionResolver indexNameExpressionResolver) {
-        super(settings, ClusterStatsAction.NAME, threadPool, clusterService, transportService, actionFilters,
-              indexNameExpressionResolver, ClusterStatsRequest::new, ClusterStatsNodeRequest::new, ThreadPool.Names.MANAGEMENT,
-              ClusterStatsNodeResponse.class);
+    public TransportClusterStatsAction(ThreadPool threadPool, ClusterService clusterService, TransportService transportService,
+                                       NodeService nodeService, IndicesService indicesService, ActionFilters actionFilters) {
+        super(ClusterStatsAction.NAME, threadPool, clusterService, transportService, actionFilters,
+            ClusterStatsRequest::new, ClusterStatsNodeRequest::new, ThreadPool.Names.MANAGEMENT, ClusterStatsNodeResponse.class);
         this.nodeService = nodeService;
         this.indicesService = indicesService;
     }
@@ -74,38 +75,53 @@ public class TransportClusterStatsAction extends TransportNodesAction<ClusterSta
                                                List<ClusterStatsNodeResponse> responses, List<FailedNodeException> failures) {
         return new ClusterStatsResponse(
             System.currentTimeMillis(),
+            clusterService.state().metaData().clusterUUID(),
             clusterService.getClusterName(),
             responses,
             failures);
     }
 
     @Override
-    protected ClusterStatsNodeRequest newNodeRequest(String nodeId, ClusterStatsRequest request) {
-        return new ClusterStatsNodeRequest(nodeId, request);
+    protected ClusterStatsNodeRequest newNodeRequest(ClusterStatsRequest request) {
+        return new ClusterStatsNodeRequest(request);
     }
 
     @Override
-    protected ClusterStatsNodeResponse newNodeResponse() {
-        return new ClusterStatsNodeResponse();
+    protected ClusterStatsNodeResponse newNodeResponse(StreamInput in) throws IOException {
+        return new ClusterStatsNodeResponse(in);
     }
 
     @Override
-    protected ClusterStatsNodeResponse nodeOperation(ClusterStatsNodeRequest nodeRequest) {
+    protected ClusterStatsNodeResponse nodeOperation(ClusterStatsNodeRequest nodeRequest, Task task) {
         NodeInfo nodeInfo = nodeService.info(true, true, false, true, false, true, false, true, false, false);
         NodeStats nodeStats = nodeService.stats(CommonStatsFlags.NONE,
-                true, true, true, false, true, false, false, false, false, false, false, false);
+                true, true, true, false, true, false, false, false, false, false, true, false);
         List<ShardStats> shardsStats = new ArrayList<>();
         for (IndexService indexService : indicesService) {
             for (IndexShard indexShard : indexService) {
                 if (indexShard.routingEntry() != null && indexShard.routingEntry().active()) {
                     // only report on fully started shards
+                    CommitStats commitStats;
+                    SeqNoStats seqNoStats;
+                    RetentionLeaseStats retentionLeaseStats;
+                    try {
+                        commitStats = indexShard.commitStats();
+                        seqNoStats = indexShard.seqNoStats();
+                        retentionLeaseStats = indexShard.getRetentionLeaseStats();
+                    } catch (final AlreadyClosedException e) {
+                        // shard is closed - no stats is fine
+                        commitStats = null;
+                        seqNoStats = null;
+                        retentionLeaseStats = null;
+                    }
                     shardsStats.add(
-                        new ShardStats(
-                            indexShard.routingEntry(),
-                            indexShard.shardPath(),
-                            new CommonStats(indicesService.getIndicesQueryCache(), indexShard, SHARD_STATS_FLAGS),
-                            indexShard.commitStats(),
-                            indexShard.seqNoStats()));
+                            new ShardStats(
+                                    indexShard.routingEntry(),
+                                    indexShard.shardPath(),
+                                    new CommonStats(indicesService.getIndicesQueryCache(), indexShard, SHARD_STATS_FLAGS),
+                                    commitStats,
+                                    seqNoStats,
+                                    retentionLeaseStats));
                 }
             }
         }
@@ -115,7 +131,8 @@ public class TransportClusterStatsAction extends TransportNodesAction<ClusterSta
             clusterStatus = new ClusterStateHealth(clusterService.state()).getStatus();
         }
 
-        return new ClusterStatsNodeResponse(nodeInfo.getNode(), clusterStatus, nodeInfo, nodeStats, shardsStats.toArray(new ShardStats[shardsStats.size()]));
+        return new ClusterStatsNodeResponse(nodeInfo.getNode(), clusterStatus, nodeInfo, nodeStats,
+            shardsStats.toArray(new ShardStats[shardsStats.size()]));
 
     }
 
@@ -123,19 +140,13 @@ public class TransportClusterStatsAction extends TransportNodesAction<ClusterSta
 
         ClusterStatsRequest request;
 
-        public ClusterStatsNodeRequest() {
+        public ClusterStatsNodeRequest(StreamInput in) throws IOException {
+            super(in);
+            request = new ClusterStatsRequest(in);
         }
 
-        ClusterStatsNodeRequest(String nodeId, ClusterStatsRequest request) {
-            super(nodeId);
+        ClusterStatsNodeRequest(ClusterStatsRequest request) {
             this.request = request;
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
-            request = new ClusterStatsRequest();
-            request.readFrom(in);
         }
 
         @Override

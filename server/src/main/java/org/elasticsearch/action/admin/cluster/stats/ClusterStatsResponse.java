@@ -40,15 +40,22 @@ public class ClusterStatsResponse extends BaseNodesResponse<ClusterStatsNodeResp
     ClusterStatsIndices indicesStats;
     ClusterHealthStatus status;
     long timestamp;
+    String clusterUUID;
 
-    ClusterStatsResponse() {
+    public ClusterStatsResponse(StreamInput in) throws IOException {
+        super(in);
+        timestamp = in.readVLong();
+        // it may be that the master switched on us while doing the operation. In this case the status may be null.
+        status = in.readOptionalWriteable(ClusterHealthStatus::readFrom);
     }
 
     public ClusterStatsResponse(long timestamp,
+                                String clusterUUID,
                                 ClusterName clusterName,
                                 List<ClusterStatsNodeResponse> nodes,
                                 List<FailedNodeException> failures) {
         super(clusterName, nodes, failures);
+        this.clusterUUID = clusterUUID;
         this.timestamp = timestamp;
         nodesStats = new ClusterStatsNodes(nodes);
         indicesStats = new ClusterStatsIndices(nodes);
@@ -59,6 +66,10 @@ public class ClusterStatsResponse extends BaseNodesResponse<ClusterStatsNodeResp
                 break;
             }
         }
+    }
+
+    public String getClusterUUID() {
+        return this.clusterUUID;
     }
 
     public long getTimestamp() {
@@ -75,14 +86,6 @@ public class ClusterStatsResponse extends BaseNodesResponse<ClusterStatsNodeResp
 
     public ClusterStatsIndices getIndicesStats() {
         return indicesStats;
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        timestamp = in.readVLong();
-        // it may be that the master switched on us while doing the operation. In this case the status may be null.
-        status = in.readOptionalWriteable(ClusterHealthStatus::readFrom);
     }
 
     @Override
@@ -106,11 +109,12 @@ public class ClusterStatsResponse extends BaseNodesResponse<ClusterStatsNodeResp
     @Override
     protected void writeNodesTo(StreamOutput out, List<ClusterStatsNodeResponse> nodes) throws IOException {
         // nodeStats and indicesStats are rebuilt from nodes
-        out.writeStreamableList(nodes);
+        out.writeList(nodes);
     }
 
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+        builder.field("cluster_uuid", getClusterUUID());
         builder.field("timestamp", getTimestamp());
         if (status != null) {
             builder.field("status", status.name().toLowerCase(Locale.ROOT));

@@ -83,7 +83,7 @@ public class PrimaryTermsTests extends ESAllocationTestCase {
     }
 
     /**
-     * puts primary shard routings into initializing state
+     * puts primary shard indexRoutings into initializing state
      */
     private void initPrimaries() {
         logger.info("adding {} nodes and performing rerouting", this.numberOfReplicas + 1);
@@ -110,10 +110,10 @@ public class PrimaryTermsTests extends ESAllocationTestCase {
     }
 
     private boolean startInitializingShards(String index) {
-        final List<ShardRouting> startedShards = this.clusterState.getRoutingNodes().shardsWithState(index, INITIALIZING);
+        final List<ShardRouting> startedShards = clusterState.getRoutingNodes().shardsWithState(index, INITIALIZING);
         logger.info("start primary shards for index [{}]: {} ", index, startedShards);
-        ClusterState rerouteResult = allocationService.applyStartedShards(this.clusterState, startedShards);
-        boolean changed = rerouteResult.equals(this.clusterState) == false;
+        ClusterState rerouteResult = startShardsAndReroute(allocationService, clusterState, startedShards);
+        boolean changed = rerouteResult.equals(clusterState) == false;
         applyRerouteResult(rerouteResult);
         return changed;
     }

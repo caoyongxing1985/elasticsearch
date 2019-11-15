@@ -61,6 +61,12 @@ public class ClusterUpdateSettingsRequest extends AcknowledgedRequest<ClusterUpd
     private Settings transientSettings = EMPTY_SETTINGS;
     private Settings persistentSettings = EMPTY_SETTINGS;
 
+    public ClusterUpdateSettingsRequest(StreamInput in) throws IOException {
+        super(in);
+        transientSettings = readSettingsFromStream(in);
+        persistentSettings = readSettingsFromStream(in);
+    }
+
     public ClusterUpdateSettingsRequest() {
     }
 
@@ -108,8 +114,7 @@ public class ClusterUpdateSettingsRequest extends AcknowledgedRequest<ClusterUpd
     /**
      * Sets the transient settings to be updated. They will not survive a full cluster restart
      */
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    public ClusterUpdateSettingsRequest transientSettings(Map source) {
+    public ClusterUpdateSettingsRequest transientSettings(Map<String, ?> source) {
         try {
             XContentBuilder builder = XContentFactory.contentBuilder(XContentType.JSON);
             builder.map(source);
@@ -147,8 +152,7 @@ public class ClusterUpdateSettingsRequest extends AcknowledgedRequest<ClusterUpd
     /**
      * Sets the persistent settings to be updated. They will get applied cross restarts
      */
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    public ClusterUpdateSettingsRequest persistentSettings(Map source) {
+    public ClusterUpdateSettingsRequest persistentSettings(Map<String, ?> source) {
         try {
             XContentBuilder builder = XContentFactory.contentBuilder(XContentType.JSON);
             builder.map(source);
@@ -157,13 +161,6 @@ public class ClusterUpdateSettingsRequest extends AcknowledgedRequest<ClusterUpd
             throw new ElasticsearchGenerationException("Failed to generate [" + source + "]", e);
         }
         return this;
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        transientSettings = readSettingsFromStream(in);
-        persistentSettings = readSettingsFromStream(in);
     }
 
     @Override

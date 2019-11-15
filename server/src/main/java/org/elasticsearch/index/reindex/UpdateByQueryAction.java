@@ -19,25 +19,13 @@
 
 package org.elasticsearch.index.reindex;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class UpdateByQueryAction extends
-        Action<UpdateByQueryRequest, BulkByScrollResponse, UpdateByQueryRequestBuilder> {
+public class UpdateByQueryAction extends ActionType<BulkByScrollResponse> {
     public static final UpdateByQueryAction INSTANCE = new UpdateByQueryAction();
     public static final String NAME = "indices:data/write/update/byquery";
 
     private UpdateByQueryAction() {
-        super(NAME);
-    }
-
-    @Override
-    public UpdateByQueryRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new UpdateByQueryRequestBuilder(client, this);
-    }
-
-    @Override
-    public BulkByScrollResponse newResponse() {
-        return new BulkByScrollResponse();
+        super(NAME, BulkByScrollResponse::new);
     }
 }

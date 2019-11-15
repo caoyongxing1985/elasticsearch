@@ -19,25 +19,14 @@
 
 package org.elasticsearch.action.admin.cluster.tasks;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class PendingClusterTasksAction extends Action<PendingClusterTasksRequest, PendingClusterTasksResponse, PendingClusterTasksRequestBuilder> {
+public class PendingClusterTasksAction extends ActionType<PendingClusterTasksResponse> {
 
     public static final PendingClusterTasksAction INSTANCE = new PendingClusterTasksAction();
     public static final String NAME = "cluster:monitor/task";
 
     private PendingClusterTasksAction() {
-        super(NAME);
-    }
-
-    @Override
-    public PendingClusterTasksResponse newResponse() {
-        return new PendingClusterTasksResponse();
-    }
-
-    @Override
-    public PendingClusterTasksRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new PendingClusterTasksRequestBuilder(client, this);
+        super(NAME, PendingClusterTasksResponse::new);
     }
 }

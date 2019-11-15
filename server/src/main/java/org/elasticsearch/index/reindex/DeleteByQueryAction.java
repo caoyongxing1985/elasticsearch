@@ -19,25 +19,14 @@
 
 package org.elasticsearch.index.reindex;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class DeleteByQueryAction extends Action<DeleteByQueryRequest, BulkByScrollResponse, DeleteByQueryRequestBuilder> {
+public class DeleteByQueryAction extends ActionType<BulkByScrollResponse> {
 
     public static final DeleteByQueryAction INSTANCE = new DeleteByQueryAction();
     public static final String NAME = "indices:data/write/delete/byquery";
 
     private DeleteByQueryAction() {
-        super(NAME);
-    }
-
-    @Override
-    public DeleteByQueryRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new DeleteByQueryRequestBuilder(client, this);
-    }
-
-    @Override
-    public BulkByScrollResponse newResponse() {
-        return new BulkByScrollResponse();
+        super(NAME, BulkByScrollResponse::new);
     }
 }

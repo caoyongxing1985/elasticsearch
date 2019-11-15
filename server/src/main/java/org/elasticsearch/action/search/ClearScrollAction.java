@@ -19,25 +19,14 @@
 
 package org.elasticsearch.action.search;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class ClearScrollAction extends Action<ClearScrollRequest, ClearScrollResponse, ClearScrollRequestBuilder> {
+public class ClearScrollAction extends ActionType<ClearScrollResponse> {
 
     public static final ClearScrollAction INSTANCE = new ClearScrollAction();
     public static final String NAME = "indices:data/read/scroll/clear";
 
     private ClearScrollAction() {
-        super(NAME);
-    }
-
-    @Override
-    public ClearScrollResponse newResponse() {
-        return new ClearScrollResponse();
-    }
-
-    @Override
-    public ClearScrollRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new ClearScrollRequestBuilder(client, this);
+        super(NAME, ClearScrollResponse::new);
     }
 }

@@ -27,7 +27,7 @@ import java.io.IOException;
 
 /**
  * A request to upgrade one or more indices. In order to update all indices, pass an empty array or
- * <tt>null</tt> for the indices.
+ * {@code null} for the indices.
  * @see org.elasticsearch.client.Requests#upgradeRequest(String...)
  * @see org.elasticsearch.client.IndicesAdminClient#upgrade(UpgradeRequest)
  * @see UpgradeResponse
@@ -49,13 +49,8 @@ public class UpgradeRequest extends BroadcastRequest<UpgradeRequest> {
         super(indices);
     }
 
-    public UpgradeRequest() {
-
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
+    public UpgradeRequest(StreamInput in) throws IOException {
+        super(in);
         upgradeOnlyAncientSegments = in.readBoolean();
     }
 
@@ -67,7 +62,7 @@ public class UpgradeRequest extends BroadcastRequest<UpgradeRequest> {
 
     /**
      * Should the upgrade only the ancient (older major version of Lucene) segments?
-     * Defaults to <tt>false</tt>.
+     * Defaults to {@code false}.
      */
     public boolean upgradeOnlyAncientSegments() {
         return upgradeOnlyAncientSegments;

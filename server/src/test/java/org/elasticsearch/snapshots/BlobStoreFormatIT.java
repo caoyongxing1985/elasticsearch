@@ -35,8 +35,8 @@ import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.translog.BufferedChecksumStreamOutput;
+import org.elasticsearch.repositories.blobstore.BlobStoreTestUtil;
 import org.elasticsearch.repositories.blobstore.ChecksumBlobStoreFormat;
 import org.elasticsearch.snapshots.mockstore.BlobContainerWrapper;
 
@@ -110,24 +110,17 @@ public class BlobStoreFormatIT extends AbstractSnapshotIntegTestCase {
     public void testBlobStoreOperations() throws IOException {
         BlobStore blobStore = createTestBlobStore();
         BlobContainer blobContainer = blobStore.blobContainer(BlobPath.cleanPath());
-        ChecksumBlobStoreFormat<BlobObj> checksumJSON = new ChecksumBlobStoreFormat<>(BLOB_CODEC, "%s", BlobObj::fromXContent,
-            xContentRegistry(), false, XContentType.JSON);
         ChecksumBlobStoreFormat<BlobObj> checksumSMILE = new ChecksumBlobStoreFormat<>(BLOB_CODEC, "%s", BlobObj::fromXContent,
-            xContentRegistry(), false, XContentType.SMILE);
+            xContentRegistry(), false);
         ChecksumBlobStoreFormat<BlobObj> checksumSMILECompressed = new ChecksumBlobStoreFormat<>(BLOB_CODEC, "%s", BlobObj::fromXContent,
-            xContentRegistry(), true, XContentType.SMILE);
+            xContentRegistry(), true);
 
         // Write blobs in different formats
-        checksumJSON.write(new BlobObj("checksum json"), blobContainer, "check-json");
-        checksumSMILE.write(new BlobObj("checksum smile"), blobContainer, "check-smile");
-        checksumSMILECompressed.write(new BlobObj("checksum smile compressed"), blobContainer, "check-smile-comp");
+        checksumSMILE.write(new BlobObj("checksum smile"), blobContainer, "check-smile", true);
+        checksumSMILECompressed.write(new BlobObj("checksum smile compressed"), blobContainer, "check-smile-comp", true);
 
         // Assert that all checksum blobs can be read by all formats
-        assertEquals(checksumJSON.read(blobContainer, "check-json").getText(), "checksum json");
-        assertEquals(checksumSMILE.read(blobContainer, "check-json").getText(), "checksum json");
-        assertEquals(checksumJSON.read(blobContainer, "check-smile").getText(), "checksum smile");
         assertEquals(checksumSMILE.read(blobContainer, "check-smile").getText(), "checksum smile");
-        assertEquals(checksumJSON.read(blobContainer, "check-smile-comp").getText(), "checksum smile compressed");
         assertEquals(checksumSMILE.read(blobContainer, "check-smile-comp").getText(), "checksum smile compressed");
     }
 
@@ -139,12 +132,12 @@ public class BlobStoreFormatIT extends AbstractSnapshotIntegTestCase {
             veryRedundantText.append("Blah ");
         }
         ChecksumBlobStoreFormat<BlobObj> checksumFormat = new ChecksumBlobStoreFormat<>(BLOB_CODEC, "%s", BlobObj::fromXContent,
-            xContentRegistry(), false, randomBoolean() ? XContentType.SMILE : XContentType.JSON);
+            xContentRegistry(), false);
         ChecksumBlobStoreFormat<BlobObj> checksumFormatComp = new ChecksumBlobStoreFormat<>(BLOB_CODEC, "%s", BlobObj::fromXContent,
-            xContentRegistry(), true, randomBoolean() ? XContentType.SMILE : XContentType.JSON);
+            xContentRegistry(), true);
         BlobObj blobObj = new BlobObj(veryRedundantText.toString());
-        checksumFormatComp.write(blobObj, blobContainer, "blob-comp");
-        checksumFormat.write(blobObj, blobContainer, "blob-not-comp");
+        checksumFormatComp.write(blobObj, blobContainer, "blob-comp", true);
+        checksumFormat.write(blobObj, blobContainer, "blob-not-comp", true);
         Map<String, BlobMetaData> blobs = blobContainer.listBlobsByPrefix("blob-");
         assertEquals(blobs.size(), 2);
         assertThat(blobs.get("blob-not-comp").length(), greaterThan(blobs.get("blob-comp").length()));
@@ -156,8 +149,8 @@ public class BlobStoreFormatIT extends AbstractSnapshotIntegTestCase {
         String testString = randomAlphaOfLength(randomInt(10000));
         BlobObj blobObj = new BlobObj(testString);
         ChecksumBlobStoreFormat<BlobObj> checksumFormat = new ChecksumBlobStoreFormat<>(BLOB_CODEC, "%s", BlobObj::fromXContent,
-            xContentRegistry(), randomBoolean(), randomBoolean() ? XContentType.SMILE : XContentType.JSON);
-        checksumFormat.write(blobObj, blobContainer, "test-path");
+            xContentRegistry(), randomBoolean());
+        checksumFormat.write(blobObj, blobContainer, "test-path", true);
         assertEquals(checksumFormat.read(blobContainer, "test-path").getText(), testString);
         randomCorruption(blobContainer, "test-path");
         try {
@@ -191,7 +184,7 @@ public class BlobStoreFormatIT extends AbstractSnapshotIntegTestCase {
             }
         };
         final ChecksumBlobStoreFormat<BlobObj> checksumFormat = new ChecksumBlobStoreFormat<>(BLOB_CODEC, "%s", BlobObj::fromXContent,
-            xContentRegistry(), randomBoolean(), randomBoolean() ? XContentType.SMILE : XContentType.JSON);
+            xContentRegistry(), randomBoolean());
         ExecutorService threadPool = Executors.newFixedThreadPool(1);
         try {
             Future<Void> future = threadPool.submit(new Callable<Void>() {
@@ -201,11 +194,12 @@ public class BlobStoreFormatIT extends AbstractSnapshotIntegTestCase {
                     return null;
                 }
             });
+            // signalling
             block.await(5, TimeUnit.SECONDS);
-            assertFalse(blobContainer.blobExists("test-blob"));
+            assertFalse(BlobStoreTestUtil.blobExists(blobContainer, "test-blob"));
             unblock.countDown();
             future.get();
-            assertTrue(blobContainer.blobExists("test-blob"));
+            assertTrue(BlobStoreTestUtil.blobExists(blobContainer, "test-blob"));
         } finally {
             threadPool.shutdown();
         }
@@ -215,7 +209,7 @@ public class BlobStoreFormatIT extends AbstractSnapshotIntegTestCase {
         final String name = randomAlphaOfLength(10);
         final BlobObj blobObj = new BlobObj("test");
         final ChecksumBlobStoreFormat<BlobObj> checksumFormat = new ChecksumBlobStoreFormat<>(BLOB_CODEC, "%s", BlobObj::fromXContent,
-            xContentRegistry(), randomBoolean(), randomBoolean() ? XContentType.SMILE : XContentType.JSON);
+            xContentRegistry(), randomBoolean());
 
         final BlobStore blobStore = createTestBlobStore();
         final BlobContainer blobContainer = blobStore.blobContainer(BlobPath.cleanPath());
@@ -224,57 +218,21 @@ public class BlobStoreFormatIT extends AbstractSnapshotIntegTestCase {
             IOException writeBlobException = expectThrows(IOException.class, () -> {
                 BlobContainer wrapper = new BlobContainerWrapper(blobContainer) {
                     @Override
-                    public void writeBlob(String blobName, InputStream inputStream, long blobSize) throws IOException {
-                        throw new IOException("Exception thrown in writeBlob() for " + blobName);
+                    public void writeBlobAtomic(String blobName, InputStream inputStream, long blobSize, boolean failIfAlreadyExists)
+                        throws IOException {
+                        throw new IOException("Exception thrown in writeBlobAtomic() for " + blobName);
                     }
                 };
                 checksumFormat.writeAtomic(blobObj, wrapper, name);
             });
 
-            assertEquals("Exception thrown in writeBlob() for pending-" + name, writeBlobException.getMessage());
+            assertEquals("Exception thrown in writeBlobAtomic() for " + name, writeBlobException.getMessage());
             assertEquals(0, writeBlobException.getSuppressed().length);
-        }
-        {
-            IOException moveException = expectThrows(IOException.class, () -> {
-                BlobContainer wrapper = new BlobContainerWrapper(blobContainer) {
-                    @Override
-                    public void move(String sourceBlobName, String targetBlobName) throws IOException {
-                        throw new IOException("Exception thrown in move() for " + sourceBlobName);
-                    }
-                };
-                checksumFormat.writeAtomic(blobObj, wrapper, name);
-            });
-            assertEquals("Exception thrown in move() for pending-" + name, moveException.getMessage());
-            assertEquals(0, moveException.getSuppressed().length);
-        }
-        {
-            IOException moveThenDeleteException = expectThrows(IOException.class, () -> {
-                BlobContainer wrapper = new BlobContainerWrapper(blobContainer) {
-                    @Override
-                    public void move(String sourceBlobName, String targetBlobName) throws IOException {
-                        throw new IOException("Exception thrown in move() for " + sourceBlobName);
-                    }
-
-                    @Override
-                    public void deleteBlob(String blobName) throws IOException {
-                        throw new IOException("Exception thrown in deleteBlob() for " + blobName);
-                    }
-                };
-                checksumFormat.writeAtomic(blobObj, wrapper, name);
-            });
-
-            assertEquals("Exception thrown in move() for pending-" + name, moveThenDeleteException.getMessage());
-            assertEquals(1, moveThenDeleteException.getSuppressed().length);
-
-            final Throwable suppressedThrowable = moveThenDeleteException.getSuppressed()[0];
-            assertTrue(suppressedThrowable instanceof IOException);
-            assertEquals("Exception thrown in deleteBlob() for pending-" + name, suppressedThrowable.getMessage());
         }
     }
 
     protected BlobStore createTestBlobStore() throws IOException {
-        Settings settings = Settings.builder().build();
-        return new FsBlobStore(settings, randomRepoPath());
+        return new FsBlobStore(Settings.EMPTY, randomRepoPath(), false);
     }
 
     protected void randomCorruption(BlobContainer blobContainer, String blobName) throws IOException {
@@ -287,10 +245,9 @@ public class BlobStoreFormatIT extends AbstractSnapshotIntegTestCase {
             int location = randomIntBetween(0, buffer.length - 1);
             buffer[location] = (byte) (buffer[location] ^ 42);
         } while (originalChecksum == checksum(buffer));
-        blobContainer.deleteBlob(blobName); // delete original before writing new blob
         BytesArray bytesArray = new BytesArray(buffer);
         try (StreamInput stream = bytesArray.streamInput()) {
-            blobContainer.writeBlob(blobName, stream, bytesArray.length());
+            blobContainer.writeBlob(blobName, stream, bytesArray.length(), false);
         }
     }
 

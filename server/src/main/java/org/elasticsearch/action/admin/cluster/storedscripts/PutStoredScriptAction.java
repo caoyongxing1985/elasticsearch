@@ -19,29 +19,17 @@
 
 package org.elasticsearch.action.admin.cluster.storedscripts;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 
 
-public class PutStoredScriptAction extends Action<PutStoredScriptRequest, PutStoredScriptResponse,
-        PutStoredScriptRequestBuilder> {
+public class PutStoredScriptAction extends ActionType<AcknowledgedResponse> {
 
     public static final PutStoredScriptAction INSTANCE = new PutStoredScriptAction();
     public static final String NAME = "cluster:admin/script/put";
 
-
     private PutStoredScriptAction() {
-        super(NAME);
+        super(NAME, AcknowledgedResponse::new);
     }
 
-
-    @Override
-    public PutStoredScriptResponse newResponse() {
-        return new PutStoredScriptResponse();
-    }
-
-    @Override
-    public PutStoredScriptRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new PutStoredScriptRequestBuilder(client, this);
-    }
 }

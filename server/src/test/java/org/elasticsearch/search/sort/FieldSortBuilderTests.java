@@ -26,6 +26,7 @@ import org.apache.lucene.search.SortedNumericSortField;
 import org.apache.lucene.search.SortedSetSelector;
 import org.apache.lucene.search.SortedSetSortField;
 import org.apache.lucene.search.TermQuery;
+import org.elasticsearch.common.xcontent.XContentParseException;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
 import org.elasticsearch.index.fielddata.IndexFieldData.XFieldComparatorSource;
@@ -44,7 +45,6 @@ import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.MultiValueMode;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -89,17 +89,10 @@ public class FieldSortBuilderTests extends AbstractSortTestCase<FieldSortBuilder
             builder.sortMode(randomFrom(SortMode.values()));
         }
         if (randomBoolean()) {
-            if (randomBoolean()) {
-                builder.setNestedSort(createRandomNestedSort(3));
-            } else {
-                // the following are alternative ways to setNestedSort for nested sorting
-                if (randomBoolean()) {
-                    builder.setNestedFilter(randomNestedFilter());
-                }
-                if (randomBoolean()) {
-                    builder.setNestedPath(randomAlphaOfLengthBetween(1, 10));
-                }
-            }
+            builder.setNestedSort(createRandomNestedSort(3));
+        }
+        if (randomBoolean()) {
+            builder.setNumericType(randomFrom(random(), "long", "double", "date", "date_nanos"));
         }
         return builder;
     }
@@ -107,19 +100,11 @@ public class FieldSortBuilderTests extends AbstractSortTestCase<FieldSortBuilder
     @Override
     protected FieldSortBuilder mutate(FieldSortBuilder original) throws IOException {
         FieldSortBuilder mutated = new FieldSortBuilder(original);
-        int parameter = randomIntBetween(0, 4);
+        int parameter = randomIntBetween(0, 5);
         switch (parameter) {
         case 0:
-            if (original.getNestedPath() == null && original.getNestedFilter() == null) {
-                mutated.setNestedSort(
-                        randomValueOtherThan(original.getNestedSort(), () -> NestedSortBuilderTests.createRandomNestedSort(3)));
-            } else {
-                if (randomBoolean()) {
-                    mutated.setNestedPath(randomValueOtherThan(original.getNestedPath(), () -> randomAlphaOfLengthBetween(1, 10)));
-                } else {
-                    mutated.setNestedFilter(randomValueOtherThan(original.getNestedFilter(), () -> randomNestedFilter()));
-                }
-            }
+            mutated.setNestedSort(
+                randomValueOtherThan(original.getNestedSort(), () -> NestedSortBuilderTests.createRandomNestedSort(3)));
             break;
         case 1:
             mutated.sortMode(randomValueOtherThan(original.sortMode(), () -> randomFrom(SortMode.values())));
@@ -134,6 +119,10 @@ public class FieldSortBuilderTests extends AbstractSortTestCase<FieldSortBuilder
             break;
         case 4:
             mutated.order(randomValueOtherThan(original.order(), () -> randomFrom(SortOrder.values())));
+            break;
+        case 5:
+            mutated.setNumericType(randomValueOtherThan(original.getNumericType(),
+                () -> randomFrom("long", "double", "date", "date_nanos")));
             break;
         default:
             throw new IllegalStateException("Unsupported mutation.");
@@ -158,7 +147,7 @@ public class FieldSortBuilderTests extends AbstractSortTestCase<FieldSortBuilder
     }
 
     /**
-     * Test that missing values get transfered correctly to the SortField
+     * Test that missing values get transferred correctly to the SortField
      */
     public void testBuildSortFieldMissingValue() throws IOException {
         QueryShardContext shardContextMock = createMockShardContext();
@@ -189,7 +178,7 @@ public class FieldSortBuilderTests extends AbstractSortTestCase<FieldSortBuilder
     }
 
     /**
-     * Test that the sort builder order gets transfered correctly to the SortField
+     * Test that the sort builder order gets transferred correctly to the SortField
      */
     public void testBuildSortFieldOrder() throws IOException {
         QueryShardContext shardContextMock = createMockShardContext();
@@ -213,7 +202,7 @@ public class FieldSortBuilderTests extends AbstractSortTestCase<FieldSortBuilder
     }
 
     /**
-     * Test that the sort builder mode gets transfered correctly to the SortField
+     * Test that the sort builder mode gets transferred correctly to the SortField
      */
     public void testMultiValueMode() throws IOException {
         QueryShardContext shardContextMock = createMockShardContext();
@@ -248,7 +237,7 @@ public class FieldSortBuilderTests extends AbstractSortTestCase<FieldSortBuilder
         comparatorSource = (XFieldComparatorSource) sortField.getComparatorSource();
         assertEquals(MultiValueMode.MEDIAN, comparatorSource.sortMode());
 
-        // sort mode should also be set by build() implicitely to MIN or MAX if not set explicitely on builder
+        // sort mode should also be set by build() implicitly to MIN or MAX if not set explicitly on builder
         sortBuilder = new FieldSortBuilder("value");
         sortField = sortBuilder.build(shardContextMock).field;
         assertThat(sortField, instanceOf(SortedNumericSortField.class));
@@ -277,7 +266,8 @@ public class FieldSortBuilderTests extends AbstractSortTestCase<FieldSortBuilder
         assertNotNull(nested);
         assertEquals(new TermQuery(new Term(MAPPED_STRING_FIELDNAME, "value")), nested.getInnerQuery());
 
-        sortBuilder = new FieldSortBuilder("fieldName").setNestedPath("path");
+        NestedSortBuilder nestedSort = new NestedSortBuilder("path");
+        sortBuilder = new FieldSortBuilder("fieldName").setNestedSort(nestedSort);
         sortField = sortBuilder.build(shardContextMock).field;
         assertThat(sortField.getComparatorSource(), instanceOf(XFieldComparatorSource.class));
         comparatorSource = (XFieldComparatorSource) sortField.getComparatorSource();
@@ -285,32 +275,28 @@ public class FieldSortBuilderTests extends AbstractSortTestCase<FieldSortBuilder
         assertNotNull(nested);
         assertEquals(new TermQuery(new Term(TypeFieldMapper.NAME, "__path")), nested.getInnerQuery());
 
-        sortBuilder = new FieldSortBuilder("fieldName").setNestedPath("path")
-                .setNestedFilter(QueryBuilders.termQuery(MAPPED_STRING_FIELDNAME, "value"));
+        nestedSort.setFilter(QueryBuilders.termQuery(MAPPED_STRING_FIELDNAME, "value"));
+        sortBuilder = new FieldSortBuilder("fieldName").setNestedSort(nestedSort);
         sortField = sortBuilder.build(shardContextMock).field;
         assertThat(sortField.getComparatorSource(), instanceOf(XFieldComparatorSource.class));
         comparatorSource = (XFieldComparatorSource) sortField.getComparatorSource();
         nested = comparatorSource.nested();
         assertNotNull(nested);
         assertEquals(new TermQuery(new Term(MAPPED_STRING_FIELDNAME, "value")), nested.getInnerQuery());
-
-        // if nested path is missing, we omit any filter and return a SortedNumericSortField
-        sortBuilder = new FieldSortBuilder("fieldName").setNestedFilter(QueryBuilders.termQuery(MAPPED_STRING_FIELDNAME, "value"));
-        sortField = sortBuilder.build(shardContextMock).field;
-        assertThat(sortField, instanceOf(SortedNumericSortField.class));
     }
 
     public void testUnknownOptionFails() throws IOException {
         String json = "{ \"post_date\" : {\"reverse\" : true} },\n";
 
-        XContentParser parser = createParser(JsonXContent.jsonXContent, json);
-        // need to skip until parser is located on second START_OBJECT
-        parser.nextToken();
-        parser.nextToken();
-        parser.nextToken();
+        try (XContentParser parser = createParser(JsonXContent.jsonXContent, json)) {
+            // need to skip until parser is located on second START_OBJECT
+            parser.nextToken();
+            parser.nextToken();
+            parser.nextToken();
 
-        IllegalArgumentException e = expectThrows(IllegalArgumentException.class, () -> FieldSortBuilder.fromXContent(parser, ""));
-        assertEquals("[field_sort] unknown field [reverse], parser not found", e.getMessage());
+            XContentParseException e = expectThrows(XContentParseException.class, () -> FieldSortBuilder.fromXContent(parser, ""));
+            assertEquals("[1:18] [field_sort] unknown field [reverse], parser not found", e.getMessage());
+        }
     }
 
     @Override
@@ -356,22 +342,6 @@ public class FieldSortBuilderTests extends AbstractSortTestCase<FieldSortBuilder
     }
 
     /**
-     * Test we can either set nested sort via path/filter or via nested sort builder, not both
-     */
-    public void testNestedSortBothThrows() throws IOException {
-        FieldSortBuilder sortBuilder = new FieldSortBuilder(MAPPED_STRING_FIELDNAME);
-        IllegalArgumentException iae = expectThrows(IllegalArgumentException.class,
-                () -> sortBuilder.setNestedPath("nestedPath").setNestedSort(new NestedSortBuilder("otherPath")));
-        assertEquals("Setting both nested_path/nested_filter and nested not allowed", iae.getMessage());
-        iae = expectThrows(IllegalArgumentException.class,
-                () -> sortBuilder.setNestedSort(new NestedSortBuilder("otherPath")).setNestedPath("nestedPath"));
-        assertEquals("Setting both nested_path/nested_filter and nested not allowed", iae.getMessage());
-        iae = expectThrows(IllegalArgumentException.class,
-                () -> sortBuilder.setNestedSort(new NestedSortBuilder("otherPath")).setNestedFilter(QueryBuilders.matchAllQuery()));
-        assertEquals("Setting both nested_path/nested_filter and nested not allowed", iae.getMessage());
-    }
-
-    /**
      * Test the nested Filter gets rewritten
      */
     public void testNestedRewrites() throws IOException {
@@ -382,10 +352,12 @@ public class FieldSortBuilderTests extends AbstractSortTestCase<FieldSortBuilder
                 return new MatchNoneQueryBuilder();
             }
         };
-        sortBuilder.setNestedPath("path").setNestedFilter(rangeQuery);
-        FieldSortBuilder rewritten = (FieldSortBuilder) sortBuilder
+        NestedSortBuilder nestedSort = new NestedSortBuilder("path");
+        nestedSort.setFilter(rangeQuery);
+        sortBuilder.setNestedSort(nestedSort);
+        FieldSortBuilder rewritten = sortBuilder
                 .rewrite(createMockShardContext());
-        assertNotSame(rangeQuery, rewritten.getNestedFilter());
+        assertNotSame(rangeQuery, rewritten.getNestedSort().getFilter());
     }
 
     /**
@@ -400,23 +372,9 @@ public class FieldSortBuilderTests extends AbstractSortTestCase<FieldSortBuilder
             }
         };
         sortBuilder.setNestedSort(new NestedSortBuilder("path").setFilter(rangeQuery));
-        FieldSortBuilder rewritten = (FieldSortBuilder) sortBuilder
+        FieldSortBuilder rewritten = sortBuilder
                 .rewrite(createMockShardContext());
         assertNotSame(rangeQuery, rewritten.getNestedSort().getFilter());
-    }
-
-    @Override
-    protected void assertWarnings(FieldSortBuilder testItem) {
-        List<String> expectedWarnings = new ArrayList<>();
-        if (testItem.getNestedFilter() != null) {
-            expectedWarnings.add("[nested_filter] has been deprecated in favour for the [nested] parameter");
-        }
-        if (testItem.getNestedPath() != null) {
-            expectedWarnings.add("[nested_path] has been deprecated in favor of the [nested] parameter");
-        }
-        if (expectedWarnings.isEmpty() == false) {
-            assertWarnings(expectedWarnings.toArray(new String[expectedWarnings.size()]));
-        }
     }
 
     @Override

@@ -19,12 +19,14 @@
 
 package org.elasticsearch.action.admin.indices.flush;
 
-import org.elasticsearch.action.ActionRequest;
+import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.support.broadcast.BroadcastRequest;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 
 import java.io.IOException;
+
+import static org.elasticsearch.action.ValidateActions.addValidationError;
 
 /**
  * A flush request to flush one or more indices. The flush process of an index basically frees memory from the index
@@ -50,16 +52,22 @@ public class FlushRequest extends BroadcastRequest<FlushRequest> {
         super(indices);
     }
 
+    public FlushRequest(StreamInput in) throws IOException {
+        super(in);
+        force = in.readBoolean();
+        waitIfOngoing = in.readBoolean();
+    }
+
     /**
-     * Returns <tt>true</tt> iff a flush should block
-     * if a another flush operation is already running. Otherwise <tt>false</tt>
+     * Returns {@code true} iff a flush should block
+     * if a another flush operation is already running. Otherwise {@code false}
      */
     public boolean waitIfOngoing() {
         return this.waitIfOngoing;
     }
 
     /**
-     * if set to <tt>true</tt> the flush will block
+     * if set to {@code true} the flush will block
      * if a another flush operation is already running until the flush can be performed.
      * The default is <code>true</code>
      */
@@ -84,17 +92,19 @@ public class FlushRequest extends BroadcastRequest<FlushRequest> {
     }
 
     @Override
+    public ActionRequestValidationException validate() {
+        ActionRequestValidationException validationError = super.validate();
+        if (force && waitIfOngoing == false) {
+            validationError = addValidationError("wait_if_ongoing must be true for a force flush", validationError);
+        }
+        return validationError;
+    }
+
+    @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         out.writeBoolean(force);
         out.writeBoolean(waitIfOngoing);
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        force = in.readBoolean();
-        waitIfOngoing = in.readBoolean();
     }
 
     @Override

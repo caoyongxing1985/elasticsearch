@@ -23,31 +23,36 @@ import org.elasticsearch.Build;
 import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.test.AbstractStreamableXContentTestCase;
+import org.elasticsearch.test.AbstractSerializingTestCase;
 import org.elasticsearch.test.VersionUtils;
 
 import java.io.IOException;
 import java.util.Date;
 
-public class MainResponseTests extends AbstractStreamableXContentTestCase<MainResponse> {
+public class MainResponseTests extends AbstractSerializingTestCase<MainResponse> {
 
     @Override
     protected MainResponse createTestInstance() {
         String clusterUuid = randomAlphaOfLength(10);
         ClusterName clusterName = new ClusterName(randomAlphaOfLength(10));
         String nodeName = randomAlphaOfLength(10);
-        Build build = new Build(randomAlphaOfLength(8), new Date(randomNonNegativeLong()).toString(), randomBoolean());
-        Version version = VersionUtils.randomVersion(random());
+        final String date = new Date(randomNonNegativeLong()).toString();
+        Version version = VersionUtils.randomIndexCompatibleVersion(random());
+        Build build = new Build(
+            Build.Flavor.UNKNOWN, Build.Type.UNKNOWN, randomAlphaOfLength(8), date, randomBoolean(),
+            version.toString()
+        );
         return new MainResponse(nodeName, version, clusterName, clusterUuid , build);
     }
 
     @Override
-    protected MainResponse createBlankInstance() {
-        return new MainResponse();
+    protected Writeable.Reader<MainResponse> instanceReader() {
+        return MainResponse::new;
     }
 
     @Override
@@ -57,7 +62,11 @@ public class MainResponseTests extends AbstractStreamableXContentTestCase<MainRe
 
     public void testToXContent() throws IOException {
         String clusterUUID = randomAlphaOfLengthBetween(10, 20);
-        Build build = new Build(Build.CURRENT.shortHash(), Build.CURRENT.date(), Build.CURRENT.isSnapshot());
+        final Build current = Build.CURRENT;
+        Build build = new Build(
+            current.flavor(), current.type(), current.hash(), current.date(), current.isSnapshot(),
+            current.getQualifiedVersion()
+        );
         Version version = Version.CURRENT;
         MainResponse response = new MainResponse("nodeName", version, new ClusterName("clusterName"), clusterUUID, build);
         XContentBuilder builder = XContentFactory.jsonBuilder();
@@ -67,10 +76,12 @@ public class MainResponseTests extends AbstractStreamableXContentTestCase<MainRe
                 + "\"cluster_name\":\"clusterName\","
                 + "\"cluster_uuid\":\"" + clusterUUID + "\","
                 + "\"version\":{"
-                    + "\"number\":\"" + version.toString() + "\","
-                    + "\"build_hash\":\"" + Build.CURRENT.shortHash() + "\","
-                    + "\"build_date\":\"" + Build.CURRENT.date() + "\","
-                    + "\"build_snapshot\":" + Build.CURRENT.isSnapshot() + ","
+                    + "\"number\":\"" + build.getQualifiedVersion() + "\","
+                    + "\"build_flavor\":\"" + current.flavor().displayName() + "\","
+                    + "\"build_type\":\"" + current.type().displayName() + "\","
+                    + "\"build_hash\":\"" + current.hash() + "\","
+                    + "\"build_date\":\"" + current.date() + "\","
+                    + "\"build_snapshot\":" + current.isSnapshot() + ","
                     + "\"lucene_version\":\"" + version.luceneVersion.toString() + "\","
                     + "\"minimum_wire_compatibility_version\":\"" + version.minimumCompatibilityVersion().toString() + "\","
                     + "\"minimum_index_compatibility_version\":\"" + version.minimumIndexCompatibilityVersion().toString() + "\"},"
@@ -94,7 +105,10 @@ public class MainResponseTests extends AbstractStreamableXContentTestCase<MainRe
                 break;
             case 2:
                 // toggle the snapshot flag of the original Build parameter
-                build = new Build(build.shortHash(), build.date(), !build.isSnapshot());
+                build = new Build(
+                    Build.Flavor.UNKNOWN, Build.Type.UNKNOWN, build.hash(), build.date(), !build.isSnapshot(),
+                    build.getQualifiedVersion()
+                );
                 break;
             case 3:
                 version = randomValueOtherThan(version, () -> VersionUtils.randomVersion(random()));

@@ -19,6 +19,7 @@
 
 package org.elasticsearch.action.admin.indices.stats;
 
+import org.elasticsearch.action.admin.indices.stats.IndexStats.IndexStatsBuilder;
 import org.elasticsearch.action.support.DefaultShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastResponse;
 import org.elasticsearch.cluster.routing.ShardRouting;
@@ -26,14 +27,13 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.index.Index;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.stream.Collectors;
 
 import static java.util.Collections.unmodifiableMap;
 
@@ -43,8 +43,9 @@ public class IndicesStatsResponse extends BroadcastResponse {
 
     private Map<ShardRouting, ShardStats> shardStatsMap;
 
-    IndicesStatsResponse() {
-
+    IndicesStatsResponse(StreamInput in) throws IOException {
+        super(in);
+        shards = in.readArray(ShardStats::new, (size) -> new ShardStats[size]);
     }
 
     IndicesStatsResponse(ShardStats[] shards, int totalShards, int successfulShards, int failedShards,
@@ -82,23 +83,17 @@ public class IndicesStatsResponse extends BroadcastResponse {
         if (indicesStats != null) {
             return indicesStats;
         }
-        Map<String, IndexStats> indicesStats = new HashMap<>();
 
-        Set<String> indices = new HashSet<>();
+        final Map<String, IndexStatsBuilder> indexToIndexStatsBuilder = new HashMap<>();
         for (ShardStats shard : shards) {
-            indices.add(shard.getShardRouting().getIndexName());
+            Index index = shard.getShardRouting().index();
+            IndexStatsBuilder indexStatsBuilder = indexToIndexStatsBuilder.computeIfAbsent(index.getName(),
+                    k -> new IndexStatsBuilder(k, index.getUUID()));
+            indexStatsBuilder.add(shard);
         }
 
-        for (String indexName : indices) {
-            List<ShardStats> shards = new ArrayList<>();
-            for (ShardStats shard : this.shards) {
-                if (shard.getShardRouting().getIndexName().equals(indexName)) {
-                    shards.add(shard);
-                }
-            }
-            indicesStats.put(indexName, new IndexStats(indexName, shards.toArray(new ShardStats[shards.size()])));
-        }
-        this.indicesStats = indicesStats;
+        indicesStats = indexToIndexStatsBuilder.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().build()));
         return indicesStats;
     }
 
@@ -133,12 +128,6 @@ public class IndicesStatsResponse extends BroadcastResponse {
     }
 
     @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        shards = in.readArray(ShardStats::readShardStats, (size) -> new ShardStats[size]);
-    }
-
-    @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         out.writeArray(shards);
@@ -169,7 +158,7 @@ public class IndicesStatsResponse extends BroadcastResponse {
             builder.startObject(Fields.INDICES);
             for (IndexStats indexStats : getIndices().values()) {
                 builder.startObject(indexStats.getIndex());
-
+                builder.field("uuid", indexStats.getUuid());
                 builder.startObject("primaries");
                 indexStats.getPrimaries().toXContent(builder, params);
                 builder.endObject();

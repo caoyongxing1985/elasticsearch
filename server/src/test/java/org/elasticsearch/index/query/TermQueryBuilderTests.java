@@ -27,7 +27,6 @@ import org.apache.lucene.search.TermQuery;
 import org.elasticsearch.common.ParsingException;
 import org.elasticsearch.common.lucene.BytesRefs;
 import org.elasticsearch.index.mapper.MappedFieldType;
-import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
 
@@ -50,7 +49,7 @@ public class TermQueryBuilderTests extends AbstractTermQueryTestCase<TermQueryBu
                 break;
             case 1:
                 if (randomBoolean()) {
-                    fieldName = STRING_FIELD_NAME;
+                    fieldName = randomFrom(STRING_FIELD_NAME, STRING_ALIAS_FIELD_NAME);
                 }
                 if (frequently()) {
                     value = randomAlphaOfLengthBetween(1, 10);
@@ -91,12 +90,15 @@ public class TermQueryBuilderTests extends AbstractTermQueryTestCase<TermQueryBu
     }
 
     @Override
-    protected void doAssertLuceneQuery(TermQueryBuilder queryBuilder, Query query, SearchContext context) throws IOException {
+    protected void doAssertLuceneQuery(TermQueryBuilder queryBuilder, Query query, QueryShardContext context) throws IOException {
         assertThat(query, either(instanceOf(TermQuery.class)).or(instanceOf(PointRangeQuery.class)));
-        MappedFieldType mapper = context.getQueryShardContext().fieldMapper(queryBuilder.fieldName());
+        MappedFieldType mapper = context.fieldMapper(queryBuilder.fieldName());
         if (query instanceof TermQuery) {
             TermQuery termQuery = (TermQuery) query;
-            assertThat(termQuery.getTerm().field(), equalTo(queryBuilder.fieldName()));
+
+            String expectedFieldName = expectedFieldName(queryBuilder.fieldName());
+            assertThat(termQuery.getTerm().field(), equalTo(expectedFieldName));
+
             if (mapper != null) {
                 Term term = ((TermQuery) mapper.termQuery(queryBuilder.value(), null)).getTerm();
                 assertThat(termQuery.getTerm(), equalTo(term));
@@ -135,7 +137,6 @@ public class TermQueryBuilderTests extends AbstractTermQueryTestCase<TermQueryBu
     }
 
     public void testGeo() throws Exception {
-        assumeTrue("test runs only when at least a type is registered", getCurrentTypes().length > 0);
         TermQueryBuilder query = new TermQueryBuilder(GEO_POINT_FIELD_NAME, "2,3");
         QueryShardContext context = createShardContext();
         QueryShardException e = expectThrows(QueryShardException.class, () -> query.toQuery(context));
@@ -165,5 +166,11 @@ public class TermQueryBuilderTests extends AbstractTermQueryTestCase<TermQueryBu
                 "}";
         e = expectThrows(ParsingException.class, () -> parseQuery(shortJson));
         assertEquals("[term] query doesn't support multiple fields, found [message1] and [message2]", e.getMessage());
+    }
+
+    public void testTypeField() throws IOException {
+        TermQueryBuilder builder = QueryBuilders.termQuery("_type", "value1");
+        builder.doToQuery(createShardContext());
+        assertWarnings(QueryShardContext.TYPES_DEPRECATION_MESSAGE);
     }
 }

@@ -21,35 +21,31 @@ package org.elasticsearch.persistent;
 import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry.Entry;
+import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.persistent.StartPersistentTaskAction.Request;
-import org.elasticsearch.persistent.TestPersistentTasksPlugin.TestPersistentTasksExecutor;
 import org.elasticsearch.persistent.TestPersistentTasksPlugin.TestParams;
-import org.elasticsearch.test.AbstractStreamableTestCase;
+import org.elasticsearch.persistent.TestPersistentTasksPlugin.TestPersistentTasksExecutor;
+import org.elasticsearch.test.AbstractWireSerializingTestCase;
 
 import java.util.Collections;
 
-public class StartPersistentActionRequestTests extends AbstractStreamableTestCase<Request> {
+public class StartPersistentActionRequestTests extends AbstractWireSerializingTestCase<Request> {
 
     @Override
     protected Request createTestInstance() {
-        TestParams testParams;
+        TestParams testParams = new TestParams();
         if (randomBoolean()) {
-            testParams = new TestParams();
-            if (randomBoolean()) {
-                testParams.setTestParam(randomAlphaOfLengthBetween(1, 20));
-            }
-            if (randomBoolean()) {
-                testParams.setExecutorNodeAttr(randomAlphaOfLengthBetween(1, 20));
-            }
-        } else {
-            testParams = null;
+            testParams.setTestParam(randomAlphaOfLengthBetween(1, 20));
+        }
+        if (randomBoolean()) {
+            testParams.setExecutorNodeAttr(randomAlphaOfLengthBetween(1, 20));
         }
         return new Request(UUIDs.base64UUID(), randomAlphaOfLengthBetween(1, 20), testParams);
     }
 
     @Override
-    protected Request createBlankInstance() {
-        return new Request();
+    protected Writeable.Reader<Request> instanceReader() {
+        return Request::new;
     }
 
     @Override

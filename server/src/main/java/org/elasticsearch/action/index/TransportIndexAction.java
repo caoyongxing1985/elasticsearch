@@ -20,16 +20,9 @@
 package org.elasticsearch.action.index;
 
 import org.elasticsearch.action.bulk.TransportBulkAction;
-import org.elasticsearch.action.bulk.TransportShardBulkAction;
 import org.elasticsearch.action.bulk.TransportSingleItemBulkWriteAction;
 import org.elasticsearch.action.support.ActionFilters;
-import org.elasticsearch.cluster.action.shard.ShardStateAction;
-import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
-import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.indices.IndicesService;
-import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
 /**
@@ -37,9 +30,9 @@ import org.elasticsearch.transport.TransportService;
  *
  * Allows for the following settings:
  * <ul>
- * <li><b>autoCreateIndex</b>: When set to <tt>true</tt>, will automatically create an index if one does not exists.
- * Defaults to <tt>true</tt>.
- * <li><b>allowIdGeneration</b>: If the id is set not, should it be generated. Defaults to <tt>true</tt>.
+ * <li><b>autoCreateIndex</b>: When set to {@code true}, will automatically create an index if one does not exists.
+ * Defaults to {@code true}.
+ * <li><b>allowIdGeneration</b>: If the id is set not, should it be generated. Defaults to {@code true}.
  * </ul>
  *
  * Deprecated use TransportBulkAction with a single item instead
@@ -48,18 +41,7 @@ import org.elasticsearch.transport.TransportService;
 public class TransportIndexAction extends TransportSingleItemBulkWriteAction<IndexRequest, IndexResponse> {
 
     @Inject
-    public TransportIndexAction(Settings settings, TransportService transportService, ClusterService clusterService,
-                                IndicesService indicesService,
-                                ThreadPool threadPool, ShardStateAction shardStateAction,
-                                ActionFilters actionFilters, IndexNameExpressionResolver indexNameExpressionResolver,
-                                TransportBulkAction bulkAction, TransportShardBulkAction shardBulkAction) {
-        super(settings, IndexAction.NAME, transportService, clusterService, indicesService, threadPool, shardStateAction,
-            actionFilters, indexNameExpressionResolver, IndexRequest::new, IndexRequest::new, ThreadPool.Names.INDEX,
-            bulkAction, shardBulkAction);
-    }
-
-    @Override
-    protected IndexResponse newResponseInstance() {
-        return new IndexResponse();
+    public TransportIndexAction(ActionFilters actionFilters, TransportService transportService, TransportBulkAction bulkAction) {
+        super(IndexAction.NAME, transportService, actionFilters, IndexRequest::new, bulkAction);
     }
 }

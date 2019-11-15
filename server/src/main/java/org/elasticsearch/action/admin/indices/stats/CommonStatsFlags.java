@@ -19,6 +19,8 @@
 
 package org.elasticsearch.action.admin.indices.stats;
 
+import org.elasticsearch.Version;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
@@ -33,11 +35,11 @@ public class CommonStatsFlags implements Writeable, Cloneable {
     public static final CommonStatsFlags NONE = new CommonStatsFlags().clear();
 
     private EnumSet<Flag> flags = EnumSet.allOf(Flag.class);
-    private String[] types = null;
     private String[] groups = null;
     private String[] fieldDataFields = null;
     private String[] completionDataFields = null;
     private boolean includeSegmentFileSizes = false;
+    private boolean includeUnloadedSegments = false;
 
     /**
      * @param flags flags to set. If no flags are supplied, default flags will be set.
@@ -53,30 +55,40 @@ public class CommonStatsFlags implements Writeable, Cloneable {
         final long longFlags = in.readLong();
         flags.clear();
         for (Flag flag : Flag.values()) {
-            if ((longFlags & (1 << flag.ordinal())) != 0) {
+            if ((longFlags & (1 << flag.getIndex())) != 0) {
                 flags.add(flag);
             }
         }
-        types = in.readStringArray();
+        if (in.getVersion().before(Version.V_8_0_0)) {
+            in.readStringArray();
+        }
         groups = in.readStringArray();
         fieldDataFields = in.readStringArray();
         completionDataFields = in.readStringArray();
         includeSegmentFileSizes = in.readBoolean();
+        if (in.getVersion().onOrAfter(Version.V_7_2_0)) {
+            includeUnloadedSegments = in.readBoolean();
+        }
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         long longFlags = 0;
         for (Flag flag : flags) {
-            longFlags |= (1 << flag.ordinal());
+            longFlags |= (1 << flag.getIndex());
         }
         out.writeLong(longFlags);
 
-        out.writeStringArrayNullable(types);
+        if (out.getVersion().before(Version.V_8_0_0)) {
+            out.writeStringArrayNullable(Strings.EMPTY_ARRAY);
+        }
         out.writeStringArrayNullable(groups);
         out.writeStringArrayNullable(fieldDataFields);
         out.writeStringArrayNullable(completionDataFields);
         out.writeBoolean(includeSegmentFileSizes);
+        if (out.getVersion().onOrAfter(Version.V_7_2_0)) {
+            out.writeBoolean(includeUnloadedSegments);
+        }
     }
 
     /**
@@ -84,11 +96,11 @@ public class CommonStatsFlags implements Writeable, Cloneable {
      */
     public CommonStatsFlags all() {
         flags = EnumSet.allOf(Flag.class);
-        types = null;
         groups = null;
         fieldDataFields = null;
         completionDataFields = null;
         includeSegmentFileSizes = false;
+        includeUnloadedSegments = false;
         return this;
     }
 
@@ -97,11 +109,11 @@ public class CommonStatsFlags implements Writeable, Cloneable {
      */
     public CommonStatsFlags clear() {
         flags = EnumSet.noneOf(Flag.class);
-        types = null;
         groups = null;
         fieldDataFields = null;
         completionDataFields = null;
         includeSegmentFileSizes = false;
+        includeUnloadedSegments = false;
         return this;
     }
 
@@ -111,23 +123,6 @@ public class CommonStatsFlags implements Writeable, Cloneable {
 
     public Flag[] getFlags() {
         return flags.toArray(new Flag[flags.size()]);
-    }
-
-    /**
-     * Document types to return stats for. Mainly affects {@link Flag#Indexing} when
-     * enabled, returning specific indexing stats for those types.
-     */
-    public CommonStatsFlags types(String... types) {
-        this.types = types;
-        return this;
-    }
-
-    /**
-     * Document types to return stats for. Mainly affects {@link Flag#Indexing} when
-     * enabled, returning specific indexing stats for those types.
-     */
-    public String[] types() {
-        return this.types;
     }
 
     /**
@@ -170,6 +165,15 @@ public class CommonStatsFlags implements Writeable, Cloneable {
         return this;
     }
 
+    public CommonStatsFlags includeUnloadedSegments(boolean includeUnloadedSegments) {
+        this.includeUnloadedSegments = includeUnloadedSegments;
+        return this;
+    }
+
+    public boolean includeUnloadedSegments() {
+        return this.includeUnloadedSegments;
+    }
+
     public boolean includeSegmentFileSizes() {
         return this.includeSegmentFileSizes;
     }
@@ -207,34 +211,39 @@ public class CommonStatsFlags implements Writeable, Cloneable {
     }
 
     public enum Flag {
-        // Do not change the order of these flags we use
-        // the ordinal for encoding! Only append to the end!
-        Store("store"),
-        Indexing("indexing"),
-        Get("get"),
-        Search("search"),
-        Merge("merge"),
-        Flush("flush"),
-        Refresh("refresh"),
-        QueryCache("query_cache"),
-        FieldData("fielddata"),
-        Docs("docs"),
-        Warmer("warmer"),
-        Completion("completion"),
-        Segments("segments"),
-        Translog("translog"),
-        Suggest("suggest"), // unused
-        RequestCache("request_cache"),
-        Recovery("recovery");
+        Store("store", 0),
+        Indexing("indexing", 1),
+        Get("get", 2),
+        Search("search", 3),
+        Merge("merge", 4),
+        Flush("flush", 5),
+        Refresh("refresh", 6),
+        QueryCache("query_cache", 7),
+        FieldData("fielddata", 8),
+        Docs("docs", 9),
+        Warmer("warmer", 10),
+        Completion("completion", 11),
+        Segments("segments", 12),
+        Translog("translog", 13),
+        // 14 was previously used for Suggest
+        RequestCache("request_cache", 15),
+        Recovery("recovery", 16);
 
         private final String restName;
+        private final int index;
 
-        Flag(String restName) {
+        Flag(final String restName, final int index) {
             this.restName = restName;
+            this.index = index;
         }
 
         public String getRestName() {
             return restName;
         }
+
+        private int getIndex() {
+            return index;
+        }
+
     }
 }

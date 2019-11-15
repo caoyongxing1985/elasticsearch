@@ -19,20 +19,13 @@
 
 package org.elasticsearch.action.admin.indices.mapping.put;
 
-import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.io.stream.BytesStreamOutput;
-import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
-import org.elasticsearch.common.xcontent.yaml.YamlXContent;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.RandomCreateIndexGenerator;
 import org.elasticsearch.test.ESTestCase;
@@ -46,16 +39,6 @@ public class PutMappingRequestTests extends ESTestCase {
     public void testValidation() {
         PutMappingRequest r = new PutMappingRequest("myindex");
         ActionRequestValidationException ex = r.validate();
-        assertNotNull("type validation should fail", ex);
-        assertTrue(ex.getMessage().contains("type is missing"));
-
-        r.type("");
-        ex = r.validate();
-        assertNotNull("type validation should fail", ex);
-        assertTrue(ex.getMessage().contains("type is empty"));
-
-        r.type("mytype");
-        ex = r.validate();
         assertNotNull("source validation should fail", ex);
         assertTrue(ex.getMessage().contains("source is missing"));
 
@@ -76,37 +59,19 @@ public class PutMappingRequestTests extends ESTestCase {
                 " concrete index: [[foo/bar]] and indices: [myindex];");
     }
 
+    /**
+     * Test that {@link PutMappingRequest#buildFromSimplifiedDef(String, Object...)}
+     * rejects inputs where the {@code Object...} varargs of field name and properties are not
+     * paired correctly
+     */
     public void testBuildFromSimplifiedDef() {
-        // test that method rejects input where input varargs fieldname/properites are not paired correctly
         IllegalArgumentException e = expectThrows(IllegalArgumentException.class,
                 () -> PutMappingRequest.buildFromSimplifiedDef("type", "only_field"));
         assertEquals("mapping source must be pairs of fieldnames and properties definition.", e.getMessage());
     }
 
-    public void testPutMappingRequestSerialization() throws IOException {
-        PutMappingRequest request = new PutMappingRequest("foo");
-        String mapping = Strings.toString(YamlXContent.contentBuilder().startObject().field("foo", "bar").endObject());
-        request.source(mapping, XContentType.YAML);
-        assertEquals(XContentHelper.convertToJson(new BytesArray(mapping), false, XContentType.YAML), request.source());
-
-        final Version version = randomFrom(Version.CURRENT, Version.V_5_3_0, Version.V_5_3_1, Version.V_5_3_2, Version.V_5_4_0);
-        try (BytesStreamOutput bytesStreamOutput = new BytesStreamOutput()) {
-            bytesStreamOutput.setVersion(version);
-            request.writeTo(bytesStreamOutput);
-            try (StreamInput in = StreamInput.wrap(bytesStreamOutput.bytes().toBytesRef().bytes)) {
-                in.setVersion(version);
-                PutMappingRequest serialized = new PutMappingRequest();
-                serialized.readFrom(in);
-
-                String source = serialized.source();
-                assertEquals(XContentHelper.convertToJson(new BytesArray(mapping), false, XContentType.YAML), source);
-            }
-        }
-    }
-
     public void testToXContent() throws IOException {
         PutMappingRequest request = new PutMappingRequest("foo");
-        request.type("my_type");
 
         XContentBuilder mapping = JsonXContent.contentBuilder().startObject();
         mapping.startObject("properties");
@@ -124,7 +89,6 @@ public class PutMappingRequestTests extends ESTestCase {
 
     public void testToXContentWithEmptySource() throws IOException {
         PutMappingRequest request = new PutMappingRequest("foo");
-        request.type("my_type");
 
         String actualRequestBody = Strings.toString(request);
         String expectedRequestBody = "{}";
@@ -147,9 +111,10 @@ public class PutMappingRequestTests extends ESTestCase {
 
     private void assertMappingsEqual(String expected, String actual) throws IOException {
 
-        XContentParser expectedJson = createParser(XContentType.JSON.xContent(), expected);
-        XContentParser actualJson = createParser(XContentType.JSON.xContent(), actual);
-        assertEquals(expectedJson.mapOrdered(), actualJson.mapOrdered());
+        try (XContentParser expectedJson = createParser(XContentType.JSON.xContent(), expected);
+            XContentParser actualJson = createParser(XContentType.JSON.xContent(), actual)) {
+            assertEquals(expectedJson.mapOrdered(), actualJson.mapOrdered());
+        }
     }
 
     /**
@@ -157,25 +122,8 @@ public class PutMappingRequestTests extends ESTestCase {
      */
     private static PutMappingRequest createTestItem() throws IOException {
         String index = randomAlphaOfLength(5);
-
         PutMappingRequest request = new PutMappingRequest(index);
-
-        String type = randomAlphaOfLength(5);
-        request.type(type);
-        request.source(randomMapping());
-
+        request.source(RandomCreateIndexGenerator.randomMapping("_doc"));
         return request;
-    }
-
-    private static XContentBuilder randomMapping() throws IOException {
-        XContentBuilder builder = XContentFactory.jsonBuilder();
-        builder.startObject();
-
-        if (randomBoolean()) {
-            RandomCreateIndexGenerator.randomMappingFields(builder, true);
-        }
-
-        builder.endObject();
-        return builder;
     }
 }

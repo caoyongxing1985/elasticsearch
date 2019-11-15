@@ -22,7 +22,6 @@ import org.elasticsearch.action.admin.indices.alias.IndicesAliasesRequest;
 import org.elasticsearch.action.admin.indices.alias.IndicesAliasesRequest.AliasActions;
 import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.rest.BaseRestHandler;
 import org.elasticsearch.rest.RestController;
@@ -36,8 +35,8 @@ import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.RestRequest.Method.PUT;
 
 public class RestIndexPutAliasAction extends BaseRestHandler {
-    public RestIndexPutAliasAction(Settings settings, RestController controller) {
-        super(settings);
+
+    public RestIndexPutAliasAction(RestController controller) {
         controller.registerHandler(PUT, "/{index}/_alias/{name}", this);
         controller.registerHandler(PUT, "/_alias/{name}", this);
         controller.registerHandler(PUT, "/{index}/_aliases/{name}", this);
@@ -66,6 +65,7 @@ public class RestIndexPutAliasAction extends BaseRestHandler {
         String routing = null;
         String indexRouting = null;
         String searchRouting = null;
+        Boolean writeIndex = null;
 
         if (request.hasContent()) {
             try (XContentParser parser = request.contentParser()) {
@@ -90,6 +90,8 @@ public class RestIndexPutAliasAction extends BaseRestHandler {
                         } else if ("searchRouting".equals(currentFieldName)
                                 || "search-routing".equals(currentFieldName) || "search_routing".equals(currentFieldName)) {
                             searchRouting = parser.textOrNull();
+                        } else if ("is_write_index".equals(currentFieldName)) {
+                            writeIndex = parser.booleanValue();
                         }
                     } else if (token == XContentParser.Token.START_OBJECT) {
                         if ("filter".equals(currentFieldName)) {
@@ -116,6 +118,9 @@ public class RestIndexPutAliasAction extends BaseRestHandler {
         }
         if (filter != null) {
             aliasAction.filter(filter);
+        }
+        if (writeIndex != null) {
+            aliasAction.writeIndex(writeIndex);
         }
         indicesAliasesRequest.addAliasAction(aliasAction);
         return channel -> client.admin().indices().aliases(indicesAliasesRequest, new RestToXContentListener<>(channel));

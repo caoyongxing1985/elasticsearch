@@ -19,25 +19,14 @@
 
 package org.elasticsearch.action.admin.cluster.state;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class ClusterStateAction extends Action<ClusterStateRequest, ClusterStateResponse, ClusterStateRequestBuilder> {
+public class ClusterStateAction extends ActionType<ClusterStateResponse> {
 
     public static final ClusterStateAction INSTANCE = new ClusterStateAction();
     public static final String NAME = "cluster:monitor/state";
 
     private ClusterStateAction() {
-        super(NAME);
-    }
-
-    @Override
-    public ClusterStateResponse newResponse() {
-        return new ClusterStateResponse();
-    }
-
-    @Override
-    public ClusterStateRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new ClusterStateRequestBuilder(client, this);
+        super(NAME, ClusterStateResponse::new);
     }
 }

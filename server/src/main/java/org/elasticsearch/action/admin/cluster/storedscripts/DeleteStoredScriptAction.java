@@ -19,26 +19,16 @@
 
 package org.elasticsearch.action.admin.cluster.storedscripts;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 
-public class DeleteStoredScriptAction extends Action<DeleteStoredScriptRequest, DeleteStoredScriptResponse,
-        DeleteStoredScriptRequestBuilder> {
+public class DeleteStoredScriptAction extends ActionType<AcknowledgedResponse> {
 
     public static final DeleteStoredScriptAction INSTANCE = new DeleteStoredScriptAction();
     public static final String NAME = "cluster:admin/script/delete";
 
     private DeleteStoredScriptAction() {
-        super(NAME);
+        super(NAME, AcknowledgedResponse::new);
     }
 
-    @Override
-    public DeleteStoredScriptResponse newResponse() {
-        return new DeleteStoredScriptResponse();
-    }
-
-    @Override
-    public DeleteStoredScriptRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new DeleteStoredScriptRequestBuilder(client, this);
-    }
 }

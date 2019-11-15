@@ -33,6 +33,7 @@ import org.elasticsearch.action.admin.cluster.node.hotthreads.NodesHotThreadsRes
 import org.elasticsearch.action.admin.cluster.node.info.NodesInfoRequest;
 import org.elasticsearch.action.admin.cluster.node.info.NodesInfoRequestBuilder;
 import org.elasticsearch.action.admin.cluster.node.info.NodesInfoResponse;
+import org.elasticsearch.action.admin.cluster.node.reload.NodesReloadSecureSettingsRequestBuilder;
 import org.elasticsearch.action.admin.cluster.node.stats.NodesStatsRequest;
 import org.elasticsearch.action.admin.cluster.node.stats.NodesStatsRequestBuilder;
 import org.elasticsearch.action.admin.cluster.node.stats.NodesStatsResponse;
@@ -48,15 +49,16 @@ import org.elasticsearch.action.admin.cluster.node.tasks.list.ListTasksResponse;
 import org.elasticsearch.action.admin.cluster.node.usage.NodesUsageRequest;
 import org.elasticsearch.action.admin.cluster.node.usage.NodesUsageRequestBuilder;
 import org.elasticsearch.action.admin.cluster.node.usage.NodesUsageResponse;
+import org.elasticsearch.action.admin.cluster.repositories.cleanup.CleanupRepositoryRequest;
+import org.elasticsearch.action.admin.cluster.repositories.cleanup.CleanupRepositoryRequestBuilder;
+import org.elasticsearch.action.admin.cluster.repositories.cleanup.CleanupRepositoryResponse;
 import org.elasticsearch.action.admin.cluster.repositories.delete.DeleteRepositoryRequest;
 import org.elasticsearch.action.admin.cluster.repositories.delete.DeleteRepositoryRequestBuilder;
-import org.elasticsearch.action.admin.cluster.repositories.delete.DeleteRepositoryResponse;
 import org.elasticsearch.action.admin.cluster.repositories.get.GetRepositoriesRequest;
 import org.elasticsearch.action.admin.cluster.repositories.get.GetRepositoriesRequestBuilder;
 import org.elasticsearch.action.admin.cluster.repositories.get.GetRepositoriesResponse;
 import org.elasticsearch.action.admin.cluster.repositories.put.PutRepositoryRequest;
 import org.elasticsearch.action.admin.cluster.repositories.put.PutRepositoryRequestBuilder;
-import org.elasticsearch.action.admin.cluster.repositories.put.PutRepositoryResponse;
 import org.elasticsearch.action.admin.cluster.repositories.verify.VerifyRepositoryRequest;
 import org.elasticsearch.action.admin.cluster.repositories.verify.VerifyRepositoryRequestBuilder;
 import org.elasticsearch.action.admin.cluster.repositories.verify.VerifyRepositoryResponse;
@@ -74,7 +76,6 @@ import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotReq
 import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotResponse;
 import org.elasticsearch.action.admin.cluster.snapshots.delete.DeleteSnapshotRequest;
 import org.elasticsearch.action.admin.cluster.snapshots.delete.DeleteSnapshotRequestBuilder;
-import org.elasticsearch.action.admin.cluster.snapshots.delete.DeleteSnapshotResponse;
 import org.elasticsearch.action.admin.cluster.snapshots.get.GetSnapshotsRequest;
 import org.elasticsearch.action.admin.cluster.snapshots.get.GetSnapshotsRequestBuilder;
 import org.elasticsearch.action.admin.cluster.snapshots.get.GetSnapshotsResponse;
@@ -92,13 +93,11 @@ import org.elasticsearch.action.admin.cluster.stats.ClusterStatsRequestBuilder;
 import org.elasticsearch.action.admin.cluster.stats.ClusterStatsResponse;
 import org.elasticsearch.action.admin.cluster.storedscripts.DeleteStoredScriptRequest;
 import org.elasticsearch.action.admin.cluster.storedscripts.DeleteStoredScriptRequestBuilder;
-import org.elasticsearch.action.admin.cluster.storedscripts.DeleteStoredScriptResponse;
 import org.elasticsearch.action.admin.cluster.storedscripts.GetStoredScriptRequest;
 import org.elasticsearch.action.admin.cluster.storedscripts.GetStoredScriptRequestBuilder;
 import org.elasticsearch.action.admin.cluster.storedscripts.GetStoredScriptResponse;
 import org.elasticsearch.action.admin.cluster.storedscripts.PutStoredScriptRequest;
 import org.elasticsearch.action.admin.cluster.storedscripts.PutStoredScriptRequestBuilder;
-import org.elasticsearch.action.admin.cluster.storedscripts.PutStoredScriptResponse;
 import org.elasticsearch.action.admin.cluster.tasks.PendingClusterTasksRequest;
 import org.elasticsearch.action.admin.cluster.tasks.PendingClusterTasksRequestBuilder;
 import org.elasticsearch.action.admin.cluster.tasks.PendingClusterTasksResponse;
@@ -112,8 +111,7 @@ import org.elasticsearch.action.ingest.PutPipelineRequestBuilder;
 import org.elasticsearch.action.ingest.SimulatePipelineRequest;
 import org.elasticsearch.action.ingest.SimulatePipelineRequestBuilder;
 import org.elasticsearch.action.ingest.SimulatePipelineResponse;
-import org.elasticsearch.action.ingest.WritePipelineResponse;
-import org.elasticsearch.common.Nullable;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.tasks.TaskId;
@@ -185,6 +183,11 @@ public interface ClusterAdminClient extends ElasticsearchClient {
      * Update settings in the cluster.
      */
     ClusterUpdateSettingsRequestBuilder prepareUpdateSettings();
+
+    /**
+     * Re initialize each cluster node and pass them the secret store password.
+     */
+    NodesReloadSecureSettingsRequestBuilder prepareReloadSecureSettings();
 
     /**
      * Reroutes allocation of shards. Advance API.
@@ -310,7 +313,7 @@ public interface ClusterAdminClient extends ElasticsearchClient {
 
     /**
      * Returns a request builder to fetch top N hot-threads samples per node. The hot-threads are only sampled
-     * for the node ids provided. Note: Use <tt>*</tt> to fetch samples for all nodes
+     * for the node ids provided. Note: Use {@code *} to fetch samples for all nodes
      */
     NodesHotThreadsRequestBuilder prepareNodesHotThreads(String... nodesIds);
 
@@ -411,12 +414,12 @@ public interface ClusterAdminClient extends ElasticsearchClient {
     /**
      * Registers a snapshot repository.
      */
-    ActionFuture<PutRepositoryResponse> putRepository(PutRepositoryRequest request);
+    ActionFuture<AcknowledgedResponse> putRepository(PutRepositoryRequest request);
 
     /**
      * Registers a snapshot repository.
      */
-    void putRepository(PutRepositoryRequest request, ActionListener<PutRepositoryResponse> listener);
+    void putRepository(PutRepositoryRequest request, ActionListener<AcknowledgedResponse> listener);
 
     /**
      * Registers a snapshot repository.
@@ -426,12 +429,12 @@ public interface ClusterAdminClient extends ElasticsearchClient {
     /**
      * Unregisters a repository.
      */
-    ActionFuture<DeleteRepositoryResponse> deleteRepository(DeleteRepositoryRequest request);
+    ActionFuture<AcknowledgedResponse> deleteRepository(DeleteRepositoryRequest request);
 
     /**
      * Unregisters a repository.
      */
-    void deleteRepository(DeleteRepositoryRequest request, ActionListener<DeleteRepositoryResponse> listener);
+    void deleteRepository(DeleteRepositoryRequest request, ActionListener<AcknowledgedResponse> listener);
 
     /**
      * Unregisters a repository.
@@ -452,6 +455,21 @@ public interface ClusterAdminClient extends ElasticsearchClient {
      * Gets repositories.
      */
     GetRepositoriesRequestBuilder prepareGetRepositories(String... name);
+
+    /**
+     * Cleans up repository.
+     */
+    CleanupRepositoryRequestBuilder prepareCleanupRepository(String repository);
+
+    /**
+     * Cleans up repository.
+     */
+    ActionFuture<CleanupRepositoryResponse> cleanupRepository(CleanupRepositoryRequest repository);
+
+    /**
+     * Cleans up repository.
+     */
+    void cleanupRepository(CleanupRepositoryRequest repository, ActionListener<CleanupRepositoryResponse> listener);
 
     /**
      * Verifies a repository.
@@ -484,29 +502,29 @@ public interface ClusterAdminClient extends ElasticsearchClient {
     CreateSnapshotRequestBuilder prepareCreateSnapshot(String repository, String name);
 
     /**
-     * Get snapshot.
+     * Get snapshots.
      */
     ActionFuture<GetSnapshotsResponse> getSnapshots(GetSnapshotsRequest request);
 
     /**
-     * Get snapshot.
+     * Get snapshots.
      */
     void getSnapshots(GetSnapshotsRequest request, ActionListener<GetSnapshotsResponse> listener);
 
     /**
-     * Get snapshot.
+     * Get snapshots.
      */
-    GetSnapshotsRequestBuilder prepareGetSnapshots(String repository);
+    GetSnapshotsRequestBuilder prepareGetSnapshots(String... repository);
 
     /**
      * Delete snapshot.
      */
-    ActionFuture<DeleteSnapshotResponse> deleteSnapshot(DeleteSnapshotRequest request);
+    ActionFuture<AcknowledgedResponse> deleteSnapshot(DeleteSnapshotRequest request);
 
     /**
      * Delete snapshot.
      */
-    void deleteSnapshot(DeleteSnapshotRequest request, ActionListener<DeleteSnapshotResponse> listener);
+    void deleteSnapshot(DeleteSnapshotRequest request, ActionListener<AcknowledgedResponse> listener);
 
     /**
      * Delete snapshot.
@@ -569,19 +587,12 @@ public interface ClusterAdminClient extends ElasticsearchClient {
     /**
      * Stores an ingest pipeline
      */
-    void putPipeline(PutPipelineRequest request, ActionListener<WritePipelineResponse> listener);
+    void putPipeline(PutPipelineRequest request, ActionListener<AcknowledgedResponse> listener);
 
     /**
      * Stores an ingest pipeline
      */
-    ActionFuture<WritePipelineResponse> putPipeline(PutPipelineRequest request);
-
-    /**
-     * Stores an ingest pipeline
-     * @deprecated use {@link #preparePutPipeline(String, BytesReference, XContentType)}
-     */
-    @Deprecated
-    PutPipelineRequestBuilder preparePutPipeline(String id, BytesReference source);
+    ActionFuture<AcknowledgedResponse> putPipeline(PutPipelineRequest request);
 
     /**
      * Stores an ingest pipeline
@@ -591,12 +602,12 @@ public interface ClusterAdminClient extends ElasticsearchClient {
     /**
      * Deletes a stored ingest pipeline
      */
-    void deletePipeline(DeletePipelineRequest request, ActionListener<WritePipelineResponse> listener);
+    void deletePipeline(DeletePipelineRequest request, ActionListener<AcknowledgedResponse> listener);
 
     /**
      * Deletes a stored ingest pipeline
      */
-    ActionFuture<WritePipelineResponse> deletePipeline(DeletePipelineRequest request);
+    ActionFuture<AcknowledgedResponse> deletePipeline(DeletePipelineRequest request);
 
     /**
      * Deletes a stored ingest pipeline
@@ -636,12 +647,6 @@ public interface ClusterAdminClient extends ElasticsearchClient {
     /**
      * Simulates an ingest pipeline
      */
-    @Deprecated
-    SimulatePipelineRequestBuilder prepareSimulatePipeline(BytesReference source);
-
-    /**
-     * Simulates an ingest pipeline
-     */
     SimulatePipelineRequestBuilder prepareSimulatePipeline(BytesReference source, XContentType xContentType);
 
     /**
@@ -667,12 +672,12 @@ public interface ClusterAdminClient extends ElasticsearchClient {
     /**
      * Delete a script from the cluster state
      */
-    void deleteStoredScript(DeleteStoredScriptRequest request, ActionListener<DeleteStoredScriptResponse> listener);
+    void deleteStoredScript(DeleteStoredScriptRequest request, ActionListener<AcknowledgedResponse> listener);
 
     /**
      * Delete a script from the cluster state
      */
-    ActionFuture<DeleteStoredScriptResponse> deleteStoredScript(DeleteStoredScriptRequest request);
+    ActionFuture<AcknowledgedResponse> deleteStoredScript(DeleteStoredScriptRequest request);
 
     /**
      * Delete a script from the cluster state
@@ -687,12 +692,12 @@ public interface ClusterAdminClient extends ElasticsearchClient {
     /**
      * Store a script in the cluster state
      */
-    void putStoredScript(PutStoredScriptRequest request, ActionListener<PutStoredScriptResponse> listener);
+    void putStoredScript(PutStoredScriptRequest request, ActionListener<AcknowledgedResponse> listener);
 
     /**
      * Store a script in the cluster state
      */
-    ActionFuture<PutStoredScriptResponse> putStoredScript(PutStoredScriptRequest request);
+    ActionFuture<AcknowledgedResponse> putStoredScript(PutStoredScriptRequest request);
 
     /**
      * Get a script from the cluster state

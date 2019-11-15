@@ -19,25 +19,14 @@
 
 package org.elasticsearch.action.admin.cluster.node.info;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class NodesInfoAction extends Action<NodesInfoRequest, NodesInfoResponse, NodesInfoRequestBuilder> {
+public class NodesInfoAction extends ActionType<NodesInfoResponse> {
 
     public static final NodesInfoAction INSTANCE = new NodesInfoAction();
     public static final String NAME = "cluster:monitor/nodes/info";
 
     private NodesInfoAction() {
-        super(NAME);
-    }
-
-    @Override
-    public NodesInfoResponse newResponse() {
-        return new NodesInfoResponse();
-    }
-
-    @Override
-    public NodesInfoRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new NodesInfoRequestBuilder(client, this);
+        super(NAME, NodesInfoResponse::new);
     }
 }

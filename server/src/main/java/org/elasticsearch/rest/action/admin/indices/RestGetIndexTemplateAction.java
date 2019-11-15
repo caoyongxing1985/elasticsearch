@@ -43,8 +43,7 @@ import static org.elasticsearch.rest.RestStatus.OK;
  */
 public class RestGetIndexTemplateAction extends BaseRestHandler {
 
-    public RestGetIndexTemplateAction(final Settings settings, final RestController controller) {
-        super(settings);
+    public RestGetIndexTemplateAction(final RestController controller) {
         controller.registerHandler(GET, "/_template", this);
         controller.registerHandler(GET, "/_template/{name}", this);
         controller.registerHandler(HEAD, "/_template/{name}", this);
@@ -60,6 +59,7 @@ public class RestGetIndexTemplateAction extends BaseRestHandler {
         final String[] names = Strings.splitStringByCommaToArray(request.param("name"));
 
         final GetIndexTemplatesRequest getIndexTemplatesRequest = new GetIndexTemplatesRequest(names);
+
         getIndexTemplatesRequest.local(request.paramAsBoolean("local", getIndexTemplatesRequest.local()));
         getIndexTemplatesRequest.masterNodeTimeout(request.paramAsTime("master_timeout", getIndexTemplatesRequest.masterNodeTimeout()));
 
@@ -68,7 +68,7 @@ public class RestGetIndexTemplateAction extends BaseRestHandler {
         return channel ->
                 client.admin()
                         .indices()
-                        .getTemplates(getIndexTemplatesRequest, new RestToXContentListener<GetIndexTemplatesResponse>(channel) {
+                        .getTemplates(getIndexTemplatesRequest, new RestToXContentListener<>(channel) {
                             @Override
                             protected RestStatus getStatus(final GetIndexTemplatesResponse response) {
                                 final boolean templateExists = response.getIndexTemplates().isEmpty() == false;

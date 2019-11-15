@@ -19,12 +19,14 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Method;
+import org.elasticsearch.painless.ClassWriter;
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
+import org.elasticsearch.painless.ScriptRoot;
+import org.elasticsearch.painless.lookup.PainlessMethod;
 
 import java.util.Set;
 
@@ -35,10 +37,10 @@ final class PSubShortcut extends AStoreable {
 
     private final String value;
     private final String type;
-    private final Method getter;
-    private final Method setter;
+    private final PainlessMethod getter;
+    private final PainlessMethod setter;
 
-    PSubShortcut(Location location, String value, String type, Method getter, Method setter) {
+    PSubShortcut(Location location, String value, String type, PainlessMethod getter, PainlessMethod setter) {
         super(location);
 
         this.value = value;
@@ -48,41 +50,46 @@ final class PSubShortcut extends AStoreable {
     }
 
     @Override
+    void storeSettings(CompilerSettings settings) {
+        throw createError(new IllegalStateException("illegal tree structure"));
+    }
+
+    @Override
     void extractVariables(Set<String> variables) {
         throw createError(new IllegalStateException("Illegal tree structure."));
     }
 
     @Override
-    void analyze(Locals locals) {
-        if (getter != null && (getter.rtn == void.class || !getter.arguments.isEmpty())) {
+    void analyze(ScriptRoot scriptRoot, Locals locals) {
+        if (getter != null && (getter.returnType == void.class || !getter.typeParameters.isEmpty())) {
             throw createError(new IllegalArgumentException(
                 "Illegal get shortcut on field [" + value + "] for type [" + type + "]."));
         }
 
-        if (setter != null && (setter.rtn != void.class || setter.arguments.size() != 1)) {
+        if (setter != null && (setter.returnType != void.class || setter.typeParameters.size() != 1)) {
             throw createError(new IllegalArgumentException(
                 "Illegal set shortcut on field [" + value + "] for type [" + type + "]."));
         }
 
-        if (getter != null && setter != null && setter.arguments.get(0) != getter.rtn) {
+        if (getter != null && setter != null && setter.typeParameters.get(0) != getter.returnType) {
             throw createError(new IllegalArgumentException("Shortcut argument types must match."));
         }
 
         if ((getter != null || setter != null) && (!read || getter != null) && (!write || setter != null)) {
-            actual = setter != null ? setter.arguments.get(0) : getter.rtn;
+            actual = setter != null ? setter.typeParameters.get(0) : getter.returnType;
         } else {
             throw createError(new IllegalArgumentException("Illegal shortcut on field [" + value + "] for type [" + type + "]."));
         }
     }
 
     @Override
-    void write(MethodWriter writer, Globals globals) {
-        writer.writeDebugInfo(location);
+    void write(ClassWriter classWriter, MethodWriter methodWriter, Globals globals) {
+        methodWriter.writeDebugInfo(location);
 
-        getter.write(writer);
+        methodWriter.invokeMethodCall(getter);
 
-        if (!getter.rtn.equals(getter.handle.type().returnType())) {
-            writer.checkCast(MethodWriter.getType(getter.rtn));
+        if (!getter.returnType.equals(getter.javaMethod.getReturnType())) {
+            methodWriter.checkCast(MethodWriter.getType(getter.returnType));
         }
     }
 
@@ -102,28 +109,28 @@ final class PSubShortcut extends AStoreable {
     }
 
     @Override
-    void setup(MethodWriter writer, Globals globals) {
+    void setup(ClassWriter classWriter, MethodWriter methodWriter, Globals globals) {
         // Do nothing.
     }
 
     @Override
-    void load(MethodWriter writer, Globals globals) {
-        writer.writeDebugInfo(location);
+    void load(ClassWriter classWriter, MethodWriter methodWriter, Globals globals) {
+        methodWriter.writeDebugInfo(location);
 
-        getter.write(writer);
+        methodWriter.invokeMethodCall(getter);
 
-        if (getter.rtn != getter.handle.type().returnType()) {
-            writer.checkCast(MethodWriter.getType(getter.rtn));
+        if (getter.returnType != getter.javaMethod.getReturnType()) {
+            methodWriter.checkCast(MethodWriter.getType(getter.returnType));
         }
     }
 
     @Override
-    void store(MethodWriter writer, Globals globals) {
-        writer.writeDebugInfo(location);
+    void store(ClassWriter classWriter, MethodWriter methodWriter, Globals globals) {
+        methodWriter.writeDebugInfo(location);
 
-        setter.write(writer);
+        methodWriter.invokeMethodCall(setter);
 
-        writer.writePop(MethodWriter.getType(setter.rtn).getSize());
+        methodWriter.writePop(MethodWriter.getType(setter.returnType).getSize());
     }
 
     @Override

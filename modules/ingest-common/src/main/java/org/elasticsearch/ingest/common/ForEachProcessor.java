@@ -28,8 +28,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.BiConsumer;
+
+import org.elasticsearch.ingest.WrappingProcessor;
+import org.elasticsearch.script.ScriptService;
 
 import static org.elasticsearch.ingest.ConfigurationUtils.newConfigurationException;
+import static org.elasticsearch.ingest.ConfigurationUtils.readBooleanProperty;
 import static org.elasticsearch.ingest.ConfigurationUtils.readMap;
 import static org.elasticsearch.ingest.ConfigurationUtils.readStringProperty;
 
@@ -41,32 +47,66 @@ import static org.elasticsearch.ingest.ConfigurationUtils.readStringProperty;
  *
  * Note that this processor is experimental.
  */
-public final class ForEachProcessor extends AbstractProcessor {
+public final class ForEachProcessor extends AbstractProcessor implements WrappingProcessor {
 
     public static final String TYPE = "foreach";
 
     private final String field;
     private final Processor processor;
+    private final boolean ignoreMissing;
 
-    ForEachProcessor(String tag, String field, Processor processor) {
+    ForEachProcessor(String tag, String field, Processor processor, boolean ignoreMissing) {
         super(tag);
         this.field = field;
         this.processor = processor;
+        this.ignoreMissing = ignoreMissing;
+    }
+
+    boolean isIgnoreMissing() {
+        return ignoreMissing;
     }
 
     @Override
-    public void execute(IngestDocument ingestDocument) throws Exception {
-        List values = ingestDocument.getFieldValue(field, List.class);
-        List<Object> newValues = new ArrayList<>(values.size());
-        for (Object value : values) {
-            Object previousValue = ingestDocument.getIngestMetadata().put("_value", value);
-            try {
-                processor.execute(ingestDocument);
-            } finally {
-                newValues.add(ingestDocument.getIngestMetadata().put("_value", previousValue));
+    public void execute(IngestDocument ingestDocument, BiConsumer<IngestDocument, Exception> handler) {
+        List<?> values = ingestDocument.getFieldValue(field, List.class, ignoreMissing);
+        if (values == null) {
+            if (ignoreMissing) {
+                handler.accept(ingestDocument, null);
+            } else {
+                handler.accept(null, new IllegalArgumentException("field [" + field + "] is null, cannot loop over its elements."));
             }
+        } else {
+            List<Object> newValues = new CopyOnWriteArrayList<>();
+            innerExecute(0, values, newValues, ingestDocument, handler);
         }
-        ingestDocument.setFieldValue(field, newValues);
+    }
+
+    void innerExecute(int index, List<?> values, List<Object> newValues, IngestDocument document,
+                      BiConsumer<IngestDocument, Exception> handler) {
+        if (index == values.size()) {
+            document.setFieldValue(field, new ArrayList<>(newValues));
+            handler.accept(document, null);
+            return;
+        }
+
+        Object value = values.get(index);
+        Object previousValue = document.getIngestMetadata().put("_value", value);
+        processor.execute(document, (result, e) -> {
+            if (e != null)  {
+                newValues.add(document.getIngestMetadata().put("_value", previousValue));
+                handler.accept(null, e);
+            } else if (result == null) {
+                handler.accept(null, null);
+            } else {
+                newValues.add(document.getIngestMetadata().put("_value", previousValue));
+                innerExecute(index + 1, values, newValues, document, handler);
+            }
+        });
+    }
+
+    @Override
+    public IngestDocument execute(IngestDocument ingestDocument) throws Exception {
+        throw new UnsupportedOperationException("this method should not get executed");
     }
 
     @Override
@@ -78,23 +118,32 @@ public final class ForEachProcessor extends AbstractProcessor {
         return field;
     }
 
-    Processor getProcessor() {
+    public Processor getInnerProcessor() {
         return processor;
     }
 
     public static final class Factory implements Processor.Factory {
+
+        private final ScriptService scriptService;
+
+        Factory(ScriptService scriptService) {
+            this.scriptService = scriptService;
+        }
+
         @Override
         public ForEachProcessor create(Map<String, Processor.Factory> factories, String tag,
                                        Map<String, Object> config) throws Exception {
             String field = readStringProperty(TYPE, tag, config, "field");
+            boolean ignoreMissing = readBooleanProperty(TYPE, tag, config, "ignore_missing", false);
             Map<String, Map<String, Object>> processorConfig = readMap(TYPE, tag, config, "processor");
             Set<Map.Entry<String, Map<String, Object>>> entries = processorConfig.entrySet();
             if (entries.size() != 1) {
                 throw newConfigurationException(TYPE, tag, "processor", "Must specify exactly one processor type");
             }
             Map.Entry<String, Map<String, Object>> entry = entries.iterator().next();
-            Processor processor = ConfigurationUtils.readProcessor(factories, entry.getKey(), entry.getValue());
-            return new ForEachProcessor(tag, field, processor);
+            Processor processor =
+                ConfigurationUtils.readProcessor(factories, scriptService, entry.getKey(), entry.getValue());
+            return new ForEachProcessor(tag, field, processor, ignoreMissing);
         }
     }
 }

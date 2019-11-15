@@ -48,7 +48,7 @@ public abstract class InternalNumericMetricsAggregation extends InternalAggregat
 
         @Override
         public String getValueAsString() {
-            return format.format(value());
+            return format.format(value()).toString();
         }
 
         @Override
@@ -79,7 +79,7 @@ public abstract class InternalNumericMetricsAggregation extends InternalAggregat
         public abstract double value(String name);
 
         public String valueAsString(String name) {
-            return format.format(value(name));
+            return format.format(value(name)).toString();
         }
 
         @Override
@@ -107,19 +107,16 @@ public abstract class InternalNumericMetricsAggregation extends InternalAggregat
 
     @Override
     public int hashCode() {
-        return Objects.hash(format, super.hashCode());
+        return Objects.hash(super.hashCode(), format);
     }
 
     @Override
     public boolean equals(Object obj) {
-        if (obj == null) {
-            return false;
-        }
-        if (obj.getClass() != getClass()) {
-            return false;
-        }
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        if (super.equals(obj) == false) return false;
+
         InternalNumericMetricsAggregation other = (InternalNumericMetricsAggregation) obj;
-        return super.equals(obj) &&
-                Objects.equals(format, other.format);
+        return Objects.equals(format, other.format);
     }
 }

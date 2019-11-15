@@ -19,25 +19,14 @@
 
 package org.elasticsearch.action.admin.indices.flush;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class FlushAction extends Action<FlushRequest, FlushResponse, FlushRequestBuilder> {
+public class FlushAction extends ActionType<FlushResponse> {
 
     public static final FlushAction INSTANCE = new FlushAction();
     public static final String NAME = "indices:admin/flush";
 
     private FlushAction() {
-        super(NAME);
-    }
-
-    @Override
-    public FlushResponse newResponse() {
-        return new FlushResponse();
-    }
-
-    @Override
-    public FlushRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new FlushRequestBuilder(client, this);
+        super(NAME, FlushResponse::new);
     }
 }

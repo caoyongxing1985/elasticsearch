@@ -30,6 +30,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 public class GetAliasesResponse extends ActionResponse {
 
@@ -39,17 +40,8 @@ public class GetAliasesResponse extends ActionResponse {
         this.aliases = aliases;
     }
 
-    GetAliasesResponse() {
-    }
-
-
-    public ImmutableOpenMap<String, List<AliasMetaData>> getAliases() {
-        return aliases;
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
+    public GetAliasesResponse(StreamInput in) throws IOException {
+        super(in);
         int size = in.readVInt();
         ImmutableOpenMap.Builder<String, List<AliasMetaData>> aliasesBuilder = ImmutableOpenMap.builder();
         for (int i = 0; i < size; i++) {
@@ -64,9 +56,12 @@ public class GetAliasesResponse extends ActionResponse {
         aliases = aliasesBuilder.build();
     }
 
+    public ImmutableOpenMap<String, List<AliasMetaData>> getAliases() {
+        return aliases;
+    }
+
     @Override
     public void writeTo(StreamOutput out) throws IOException {
-        super.writeTo(out);
         out.writeVInt(aliases.size());
         for (ObjectObjectCursor<String, List<AliasMetaData>> entry : aliases) {
             out.writeString(entry.key);
@@ -75,5 +70,22 @@ public class GetAliasesResponse extends ActionResponse {
                 aliasMetaData.writeTo(out);
             }
         }
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        GetAliasesResponse that = (GetAliasesResponse) o;
+        return Objects.equals(aliases, that.aliases);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(aliases);
     }
 }

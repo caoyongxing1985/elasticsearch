@@ -24,7 +24,6 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.search.aggregations.AbstractAggregationBuilder;
 import org.elasticsearch.search.aggregations.AggregatorFactories;
 import org.elasticsearch.search.aggregations.bucket.MultiBucketAggregationBuilder;
 import org.elasticsearch.search.aggregations.bucket.range.RangeAggregator.Range;
@@ -141,12 +140,15 @@ public abstract class AbstractRangeBuilder<AB extends AbstractRangeBuilder<AB, R
     }
 
     @Override
-    protected int innerHashCode() {
-        return Objects.hash(ranges, keyed);
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), ranges, keyed);
     }
 
     @Override
-    protected boolean innerEquals(Object obj) {
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        if (super.equals(obj) == false) return false;
         AbstractRangeBuilder<AB, R> other = (AbstractRangeBuilder<AB, R>) obj;
         return Objects.equals(ranges, other.ranges)
                 && Objects.equals(keyed, other.keyed);

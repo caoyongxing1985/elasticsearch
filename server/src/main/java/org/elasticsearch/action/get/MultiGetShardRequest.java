@@ -33,14 +33,26 @@ public class MultiGetShardRequest extends SingleShardRequest<MultiGetShardReques
 
     private int shardId;
     private String preference;
-    boolean realtime = true;
-    boolean refresh;
+    private boolean realtime;
+    private boolean refresh;
 
     IntArrayList locations;
     List<MultiGetRequest.Item> items;
 
-    public MultiGetShardRequest() {
+    MultiGetShardRequest(StreamInput in) throws IOException {
+        super(in);
+        int size = in.readVInt();
+        locations = new IntArrayList(size);
+        items = new ArrayList<>(size);
 
+        for (int i = 0; i < size; i++) {
+            locations.add(in.readVInt());
+            items.add(new MultiGetRequest.Item(in));
+        }
+
+        preference = in.readOptionalString();
+        refresh = in.readBoolean();
+        realtime = in.readBoolean();
     }
 
     MultiGetShardRequest(MultiGetRequest multiGetRequest, String index, int shardId) {
@@ -64,7 +76,7 @@ public class MultiGetShardRequest extends SingleShardRequest<MultiGetShardReques
 
     /**
      * Sets the preference to execute the search. Defaults to randomize across shards. Can be set to
-     * <tt>_local</tt> to prefer local shards or a custom value, which guarantees that the same order
+     * {@code _local} to prefer local shards or a custom value, which guarantees that the same order
      * will be used across different requests.
      */
     public MultiGetShardRequest preference(String preference) {
@@ -106,23 +118,6 @@ public class MultiGetShardRequest extends SingleShardRequest<MultiGetShardReques
             indices[i] = items.get(i).index();
         }
         return indices;
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        int size = in.readVInt();
-        locations = new IntArrayList(size);
-        items = new ArrayList<>(size);
-
-        for (int i = 0; i < size; i++) {
-            locations.add(in.readVInt());
-            items.add(MultiGetRequest.Item.readItem(in));
-        }
-
-        preference = in.readOptionalString();
-        refresh = in.readBoolean();
-        realtime = in.readBoolean();
     }
 
     @Override

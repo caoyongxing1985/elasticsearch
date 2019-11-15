@@ -31,6 +31,7 @@ import org.elasticsearch.index.fielddata.ScriptDocValues;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.script.MockScriptPlugin;
 import org.elasticsearch.script.Script;
+import org.elasticsearch.script.ScriptType;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.sort.ScriptSortBuilder.ScriptSortType;
 import org.elasticsearch.test.ESIntegTestCase;
@@ -50,8 +51,6 @@ import java.util.function.Function;
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery;
 import static org.elasticsearch.index.query.QueryBuilders.termQuery;
-
-import org.elasticsearch.script.ScriptType;
 import static org.elasticsearch.search.sort.SortBuilders.scriptSort;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
@@ -86,9 +85,9 @@ public class SimpleSortIT extends ESIntegTestCase {
                 return ((ScriptDocValues.Strings) doc.get("id")).getValue();
             });
 
-            scripts.put("doc['id'].values[0]", vars -> {
+            scripts.put("doc['id'][0]", vars -> {
                 Map<?, ?> doc = (Map) vars.get("doc");
-                return ((ScriptDocValues.Strings) doc.get("id")).getValues().get(0);
+                return ((ScriptDocValues.Strings) doc.get("id")).get(0);
             });
 
             scripts.put("get min long", vars -> getMinValueScript(vars, Long.MAX_VALUE, "lvalue", l -> (Long) l));
@@ -104,13 +103,12 @@ public class SimpleSortIT extends ESIntegTestCase {
         /**
          * Return the minimal value from a set of values.
          */
-        @SuppressWarnings("unchecked")
         static <T extends Comparable<T>> T getMinValueScript(Map<String, Object> vars, T initialValue, String fieldName,
                                                              Function<Object, T> converter) {
             T retval = initialValue;
             Map<?, ?> doc = (Map) vars.get("doc");
             ScriptDocValues<?> values = (ScriptDocValues<?>) doc.get(fieldName);
-            for (Object v : values.getValues()) {
+            for (Object v : values) {
                 T value = converter.apply(v);
                 retval = (value.compareTo(retval) < 0) ? value : retval;
             }
@@ -155,7 +153,7 @@ public class SimpleSortIT extends ESIntegTestCase {
         ensureGreen();
         List<IndexRequestBuilder> builders = new ArrayList<>();
         for (int i = 0; i < 10; i++) {
-            builders.add(client().prepareIndex("test", "type1", Integer.toString(i))
+            builders.add(client().prepareIndex("test").setId(Integer.toString(i))
                     .setSource(jsonBuilder()
                             .startObject()
                                 .field("str_value", new String(new char[]{(char) (97 + i), (char) (97 + i)}))
@@ -171,7 +169,7 @@ public class SimpleSortIT extends ESIntegTestCase {
         }
         Collections.shuffle(builders, random);
         for (IndexRequestBuilder builder : builders) {
-            builder.execute().actionGet();
+            builder.get();
             if (random.nextBoolean()) {
                 if (random.nextInt(5) != 0) {
                     refresh();
@@ -249,7 +247,7 @@ public class SimpleSortIT extends ESIntegTestCase {
         ensureGreen();
 
         for (int i = 0; i < 10; i++) {
-            client().prepareIndex("test", "type1", "" + i)
+            client().prepareIndex("test").setId("" + i)
                     .setSource(jsonBuilder()
                             .startObject()
                                 .field("ord", i)
@@ -265,7 +263,7 @@ public class SimpleSortIT extends ESIntegTestCase {
         }
 
         for (int i = 10; i < 20; i++) { // add some docs that don't have values in those fields
-            client().prepareIndex("test", "type1", "" + i)
+            client().prepareIndex("test").setId("" + i)
                     .setSource(jsonBuilder()
                             .startObject()
                                 .field("ord", i)
@@ -360,21 +358,21 @@ public class SimpleSortIT extends ESIntegTestCase {
         assertAcked(prepareCreate("test").addMapping("type1", mapping, XContentType.JSON));
         ensureGreen();
 
-        client().prepareIndex("test", "type1")
+        client().prepareIndex("test")
                 .setSource(jsonBuilder().startObject()
                                             .field("id", "1")
                                             .field("svalue", "aaa")
                                         .endObject())
                 .get();
 
-        client().prepareIndex("test", "type1")
+        client().prepareIndex("test")
                 .setSource(jsonBuilder().startObject()
                                             .field("id", "2")
                                             .nullField("svalue")
                                         .endObject())
                 .get();
 
-        client().prepareIndex("test", "type1")
+        client().prepareIndex("test")
                 .setSource(jsonBuilder().startObject()
                                             .field("id", "3")
                                             .field("svalue", "bbb")
@@ -394,20 +392,20 @@ public class SimpleSortIT extends ESIntegTestCase {
 
         assertNoFailures(searchResponse);
 
-        assertThat(searchResponse.getHits().getTotalHits(), equalTo(3L));
+        assertThat(searchResponse.getHits().getTotalHits().value, equalTo(3L));
         assertThat(searchResponse.getHits().getAt(0).field("id").getValue(), equalTo("1"));
         assertThat(searchResponse.getHits().getAt(1).field("id").getValue(), equalTo("3"));
         assertThat(searchResponse.getHits().getAt(2).field("id").getValue(), equalTo("2"));
 
         searchResponse = client().prepareSearch()
                 .setQuery(matchAllQuery())
-                .addScriptField("id", new Script(ScriptType.INLINE, CustomScriptPlugin.NAME, "doc['id'].values[0]", Collections.emptyMap()))
+                .addScriptField("id", new Script(ScriptType.INLINE, CustomScriptPlugin.NAME, "doc['id'][0]", Collections.emptyMap()))
                 .addSort("svalue", SortOrder.ASC)
                 .get();
 
         assertNoFailures(searchResponse);
 
-        assertThat(searchResponse.getHits().getTotalHits(), equalTo(3L));
+        assertThat(searchResponse.getHits().getTotalHits().value, equalTo(3L));
         assertThat(searchResponse.getHits().getAt(0).field("id").getValue(), equalTo("1"));
         assertThat(searchResponse.getHits().getAt(1).field("id").getValue(), equalTo("3"));
         assertThat(searchResponse.getHits().getAt(2).field("id").getValue(), equalTo("2"));
@@ -426,7 +424,7 @@ public class SimpleSortIT extends ESIntegTestCase {
         }
         assertThat(searchResponse.getFailedShards(), equalTo(0));
 
-        assertThat(searchResponse.getHits().getTotalHits(), equalTo(3L));
+        assertThat(searchResponse.getHits().getTotalHits().value, equalTo(3L));
         assertThat(searchResponse.getHits().getAt(0).field("id").getValue(), equalTo("3"));
         assertThat(searchResponse.getHits().getAt(1).field("id").getValue(), equalTo("1"));
         assertThat(searchResponse.getHits().getAt(2).field("id").getValue(), equalTo("2"));
@@ -446,7 +444,7 @@ public class SimpleSortIT extends ESIntegTestCase {
         }
         assertThat(searchResponse.getFailedShards(), equalTo(0));
 
-        assertThat(searchResponse.getHits().getTotalHits(), equalTo(1L));
+        assertThat(searchResponse.getHits().getTotalHits().value, equalTo(1L));
         assertThat(searchResponse.getHits().getAt(0).field("id").getValue(), equalTo("2"));
     }
 
@@ -464,7 +462,7 @@ public class SimpleSortIT extends ESIntegTestCase {
                         .endObject()));
         ensureGreen();
         for (int i = 0; i < 10; i++) {
-            client().prepareIndex("test", "test", Integer.toString(i))
+            client().prepareIndex("test").setId(Integer.toString(i))
                     .setSource(jsonBuilder().startObject().field("value", "" + i).endObject()).get();
         }
         refresh();

@@ -33,7 +33,8 @@ public abstract class MetadataFieldMapper extends FieldMapper {
     public interface TypeParser extends Mapper.TypeParser {
 
         @Override
-        MetadataFieldMapper.Builder<?,?> parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException;
+        MetadataFieldMapper.Builder<?,?> parse(String name, Map<String, Object> node,
+                                               ParserContext parserContext) throws MapperParsingException;
 
         /**
          * Get the default {@link MetadataFieldMapper} to use, if nothing had to be parsed.
@@ -46,6 +47,7 @@ public abstract class MetadataFieldMapper extends FieldMapper {
         MetadataFieldMapper getDefault(MappedFieldType fieldType, ParserContext parserContext);
     }
 
+    @SuppressWarnings("rawtypes")
     public abstract static class Builder<T extends Builder, Y extends MetadataFieldMapper> extends FieldMapper.Builder<T, Y> {
         public Builder(String name, MappedFieldType fieldType, MappedFieldType defaultFieldType) {
             super(name, fieldType, defaultFieldType);

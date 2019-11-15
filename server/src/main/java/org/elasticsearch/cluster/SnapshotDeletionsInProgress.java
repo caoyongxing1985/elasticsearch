@@ -40,17 +40,11 @@ import java.util.Objects;
 public class SnapshotDeletionsInProgress extends AbstractNamedDiffable<Custom> implements Custom {
 
     public static final String TYPE = "snapshot_deletions";
-    // the version where SnapshotDeletionsInProgress was introduced
-    public static final Version VERSION_INTRODUCED = Version.V_5_2_0;
 
     // the list of snapshot deletion request entries
     private final List<Entry> entries;
 
-    public SnapshotDeletionsInProgress() {
-        this(Collections.emptyList());
-    }
-
-    private SnapshotDeletionsInProgress(List<Entry> entries) {
+    public SnapshotDeletionsInProgress(List<Entry> entries) {
         this.entries = Collections.unmodifiableList(entries);
     }
 
@@ -135,7 +129,7 @@ public class SnapshotDeletionsInProgress extends AbstractNamedDiffable<Custom> i
 
     @Override
     public Version getMinimalSupportedVersion() {
-        return VERSION_INTRODUCED;
+        return Version.CURRENT.minimumCompatibilityVersion();
     }
 
     @Override

@@ -19,13 +19,13 @@
 
 package org.elasticsearch.rest.action.admin.indices;
 
+import org.elasticsearch.action.admin.indices.validate.query.QueryExplanation;
 import org.elasticsearch.action.admin.indices.validate.query.ValidateQueryRequest;
 import org.elasticsearch.action.admin.indices.validate.query.ValidateQueryResponse;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.common.ParsingException;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.rest.BaseRestHandler;
 import org.elasticsearch.rest.BytesRestResponse;
@@ -42,14 +42,12 @@ import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.RestStatus.OK;
 
 public class RestValidateQueryAction extends BaseRestHandler {
-    public RestValidateQueryAction(Settings settings, RestController controller) {
-        super(settings);
+
+    public RestValidateQueryAction(RestController controller) {
         controller.registerHandler(GET, "/_validate/query", this);
         controller.registerHandler(POST, "/_validate/query", this);
         controller.registerHandler(GET, "/{index}/_validate/query", this);
         controller.registerHandler(POST, "/{index}/_validate/query", this);
-        controller.registerHandler(GET, "/{index}/{type}/_validate/query", this);
-        controller.registerHandler(POST, "/{index}/{type}/_validate/query", this);
     }
 
     @Override
@@ -62,7 +60,6 @@ public class RestValidateQueryAction extends BaseRestHandler {
         ValidateQueryRequest validateQueryRequest = new ValidateQueryRequest(Strings.splitStringByCommaToArray(request.param("index")));
         validateQueryRequest.indicesOptions(IndicesOptions.fromRequest(request, validateQueryRequest.indicesOptions()));
         validateQueryRequest.explain(request.paramAsBoolean("explain", false));
-        validateQueryRequest.types(Strings.splitStringByCommaToArray(request.param("type")));
         validateQueryRequest.rewrite(request.paramAsBoolean("rewrite", false));
         validateQueryRequest.allShards(request.paramAsBoolean("all_shards", false));
 
@@ -101,7 +98,7 @@ public class RestValidateQueryAction extends BaseRestHandler {
         builder.startObject();
         builder.field(ValidateQueryResponse.VALID_FIELD, false);
         if (explain) {
-            builder.field(ValidateQueryResponse.ERROR_FIELD, error);
+            builder.field(QueryExplanation.ERROR_FIELD, error);
         }
         builder.endObject();
         return new BytesRestResponse(OK, builder);

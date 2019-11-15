@@ -36,7 +36,6 @@ import java.security.AccessController;
 import java.security.PrivilegedAction;
 
 import static java.lang.invoke.MethodHandles.Lookup;
-import static org.elasticsearch.painless.Compiler.Loader;
 import static org.elasticsearch.painless.WriterConstants.CLASS_VERSION;
 import static org.elasticsearch.painless.WriterConstants.CTOR_METHOD_NAME;
 import static org.elasticsearch.painless.WriterConstants.DELEGATE_BOOTSTRAP_HANDLE;
@@ -61,32 +60,35 @@ import static org.objectweb.asm.Opcodes.H_NEWINVOKESPECIAL;
  * {@link java.lang.invoke.LambdaMetafactory} since the Painless casting model
  * cannot be fully supported through this class.
  *
- * For each lambda function/method reference used within a Painless script
+ * <p>For each lambda function/method reference used within a Painless script
  * a class will be generated at link-time using the
  * {@link LambdaBootstrap#lambdaBootstrap} method that contains the following:
- * 1. member fields for any captured variables
- * 2. a constructor that will take in captured variables and assign them to
+ *
+ * <ol>
+ * <li>member fields for any captured variables
+ * <li>a constructor that will take in captured variables and assign them to
  * their respective member fields
- * 3. a static ctor delegation method, if the lambda function is a ctor.
- * 4. a method that will load the member fields representing captured variables
+ * <li>a static ctor delegation method, if the lambda function is a ctor.
+ * <li>a method that will load the member fields representing captured variables
  * and take in any other necessary values based on the arguments passed into the
  * lambda function/reference method; it will then make a delegated call to the
- * actual lambda function/reference method
+ * actual lambda function/reference method.
+ * </ol>
  *
- * Take for example the following Painless script:
+ * <p>Take for example the following Painless script:
  *
- * {@code
+ * <pre>{@code
  * List list1 = new ArrayList(); "
  * list1.add(2); "
  * List list2 = new ArrayList(); "
  * list1.forEach(x -> list2.add(x));"
  * return list[0]"
- * }
+ * }</pre>
  *
- * The script contains a lambda function with a captured variable.
+ * <p>The script contains a lambda function with a captured variable.
  * The following Lambda class would be generated:
  *
- * {@code
+ * <pre>{@code
  *     public static final class $$Lambda0 implements Consumer {
  *         private List arg$0;
  *
@@ -110,9 +112,9 @@ import static org.objectweb.asm.Opcodes.H_NEWINVOKESPECIAL;
  *         }
  *         ...
  *     }
- * }
+ * }</pre>
  *
- * Also the accept method actually uses an invokedynamic
+ * <p>Also the accept method actually uses an invokedynamic
  * instruction to call the lambda$0 method so that
  * {@link MethodHandle#asType} can be used to do the necessary
  * conversions between argument types without having to hard
@@ -121,7 +123,7 @@ import static org.objectweb.asm.Opcodes.H_NEWINVOKESPECIAL;
  * calls the constructor. This method is used by the
  * invokedynamic call to initialize the instance.
  *
- * When the {@link CallSite} is linked the linked method depends
+ * <p>When the {@link CallSite} is linked the linked method depends
  * on whether or not there are captures.  If there are no captures
  * the same instance of the generated lambda class will be
  * returned each time by the factory method as there are no
@@ -188,6 +190,10 @@ public final class LambdaBootstrap {
      * @param delegateMethodName The name of the method to be called in the Painless script class
      * @param delegateMethodType The type of method call in the Painless script class without
      *                           the captured types
+     * @param isDelegateInterface If the method to be called is owned by an interface where
+     *                            if the value is '1' if the delegate is an interface and '0'
+     *                            otherwise; note this is an int because the bootstrap method
+     *                            cannot convert constants to boolean
      * @return A {@link CallSite} linked to a factory method for creating a lambda class
      * that implements the expected functional interface
      * @throws LambdaConversionException Thrown when an illegal type conversion occurs at link time
@@ -200,9 +206,10 @@ public final class LambdaBootstrap {
             String delegateClassName,
             int delegateInvokeType,
             String delegateMethodName,
-            MethodType delegateMethodType)
+            MethodType delegateMethodType,
+            int isDelegateInterface)
             throws LambdaConversionException {
-        Loader loader = (Loader)lookup.lookupClass().getClassLoader();
+        Compiler.Loader loader = (Compiler.Loader)lookup.lookupClass().getClassLoader();
         String lambdaClassName = Type.getInternalName(lookup.lookupClass()) + "$$Lambda" + loader.newLambdaIdentifier();
         Type lambdaClassType = Type.getObjectType(lambdaClassName);
         Type delegateClassType = Type.getObjectType(delegateClassName.replace('.', '/'));
@@ -225,7 +232,7 @@ public final class LambdaBootstrap {
 
         generateInterfaceMethod(cw, factoryMethodType, lambdaClassType, interfaceMethodName,
             interfaceMethodType, delegateClassType, delegateInvokeType,
-            delegateMethodName, delegateMethodType, captures);
+            delegateMethodName, delegateMethodType, isDelegateInterface == 1, captures);
 
         endLambdaClass(cw);
 
@@ -369,6 +376,7 @@ public final class LambdaBootstrap {
             int delegateInvokeType,
             String delegateMethodName,
             MethodType delegateMethodType,
+            boolean isDelegateInterface,
             Capture[] captures)
             throws LambdaConversionException {
 
@@ -434,7 +442,7 @@ public final class LambdaBootstrap {
         Handle delegateHandle =
             new Handle(delegateInvokeType, delegateClassType.getInternalName(),
                 delegateMethodName, delegateMethodType.toMethodDescriptorString(),
-                delegateInvokeType == H_INVOKEINTERFACE);
+                isDelegateInterface);
         iface.invokeDynamic(delegateMethodName, Type.getMethodType(interfaceMethodType
                 .toMethodDescriptorString()).getDescriptor(), DELEGATE_BOOTSTRAP_HANDLE,
                 delegateHandle);
@@ -451,11 +459,11 @@ public final class LambdaBootstrap {
     }
 
     /**
-     * Defines the {@link Class} for the lambda class using the same {@link Loader}
+     * Defines the {@link Class} for the lambda class using the same {@link Compiler.Loader}
      * that originally defined the class for the Painless script.
      */
     private static Class<?> createLambdaClass(
-            Loader loader,
+            Compiler.Loader loader,
             ClassWriter cw,
             Type lambdaClassType) {
 

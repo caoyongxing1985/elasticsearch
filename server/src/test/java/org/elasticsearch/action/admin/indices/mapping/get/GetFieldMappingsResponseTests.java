@@ -23,16 +23,17 @@ import org.elasticsearch.action.admin.indices.mapping.get.GetFieldMappingsRespon
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.io.stream.StreamInput;
-import org.elasticsearch.test.ESTestCase;
+import org.elasticsearch.common.io.stream.Writeable;
+import org.elasticsearch.test.AbstractWireSerializingTestCase;
 
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
-public class GetFieldMappingsResponseTests extends ESTestCase {
+public class GetFieldMappingsResponseTests extends AbstractWireSerializingTestCase<GetFieldMappingsResponse> {
 
-    public void testSerialization() throws IOException {
+    public void testManualSerialization() throws IOException {
         Map<String, Map<String, Map<String, FieldMappingMetaData>>> mappings = new HashMap<>();
         FieldMappingMetaData fieldMappingMetaData = new FieldMappingMetaData("my field", new BytesArray("{}"));
         mappings.put("index", Collections.singletonMap("type", Collections.singletonMap("field", fieldMappingMetaData)));
@@ -40,13 +41,45 @@ public class GetFieldMappingsResponseTests extends ESTestCase {
 
         try (BytesStreamOutput out = new BytesStreamOutput()) {
             response.writeTo(out);
-            GetFieldMappingsResponse serialized = new GetFieldMappingsResponse();
             try (StreamInput in = StreamInput.wrap(out.bytes().toBytesRef().bytes)) {
-                serialized.readFrom(in);
+                GetFieldMappingsResponse serialized = new GetFieldMappingsResponse(in);
                 FieldMappingMetaData metaData = serialized.fieldMappings("index", "type", "field");
                 assertNotNull(metaData);
                 assertEquals(new BytesArray("{}"), metaData.getSource());
             }
         }
+    }
+
+    @Override
+    protected GetFieldMappingsResponse createTestInstance() {
+        return new GetFieldMappingsResponse(randomMapping());
+    }
+
+    @Override
+    protected Writeable.Reader<GetFieldMappingsResponse> instanceReader() {
+        return GetFieldMappingsResponse::new;
+    }
+
+    private Map<String, Map<String, Map<String, FieldMappingMetaData>>> randomMapping() {
+        Map<String, Map<String, Map<String, FieldMappingMetaData>>> mappings = new HashMap<>();
+
+        int indices = randomInt(10);
+        for(int i = 0; i < indices; i++) {
+            final Map<String, Map<String, FieldMappingMetaData>> doctypesMappings = new HashMap<>();
+            int doctypes = randomInt(10);
+            for(int j = 0; j < doctypes; j++) {
+                Map<String, FieldMappingMetaData> fieldMappings = new HashMap<>();
+                int fields = randomInt(10);
+                for(int k = 0; k < fields; k++) {
+                    final String mapping = randomBoolean() ? "{\"type\":\"string\"}" : "{\"type\":\"keyword\"}";
+                    FieldMappingMetaData metaData =
+                        new FieldMappingMetaData("my field", new BytesArray(mapping));
+                    fieldMappings.put("field" + k, metaData);
+                }
+                doctypesMappings.put("doctype" + j, fieldMappings);
+            }
+            mappings.put("index" + i, doctypesMappings);
+        }
+        return mappings;
     }
 }

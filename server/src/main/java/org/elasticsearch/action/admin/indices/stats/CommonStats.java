@@ -19,6 +19,7 @@
 
 package org.elasticsearch.action.admin.indices.stats;
 
+import org.apache.lucene.store.AlreadyClosedException;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -152,9 +153,6 @@ public class CommonStats implements Writeable, ToXContentFragment {
                 case Translog:
                     translog = new TranslogStats();
                     break;
-                case Suggest:
-                    // skip
-                    break;
                 case RequestCache:
                     requestCache = new RequestCacheStats();
                     break;
@@ -170,101 +168,102 @@ public class CommonStats implements Writeable, ToXContentFragment {
     public CommonStats(IndicesQueryCache indicesQueryCache, IndexShard indexShard, CommonStatsFlags flags) {
         CommonStatsFlags.Flag[] setFlags = flags.getFlags();
         for (CommonStatsFlags.Flag flag : setFlags) {
-            switch (flag) {
-                case Docs:
-                    docs = indexShard.docStats();
-                    break;
-                case Store:
-                    store = indexShard.storeStats();
-                    break;
-                case Indexing:
-                    indexing = indexShard.indexingStats(flags.types());
-                    break;
-                case Get:
-                    get = indexShard.getStats();
-                    break;
-                case Search:
-                    search = indexShard.searchStats(flags.groups());
-                    break;
-                case Merge:
-                    merge = indexShard.mergeStats();
-                    break;
-                case Refresh:
-                    refresh = indexShard.refreshStats();
-                    break;
-                case Flush:
-                    flush = indexShard.flushStats();
-                    break;
-                case Warmer:
-                    warmer = indexShard.warmerStats();
-                    break;
-                case QueryCache:
-                    queryCache = indicesQueryCache.getStats(indexShard.shardId());
-                    break;
-                case FieldData:
-                    fieldData = indexShard.fieldDataStats(flags.fieldDataFields());
-                    break;
-                case Completion:
-                    completion = indexShard.completionStats(flags.completionDataFields());
-                    break;
-                case Segments:
-                    segments = indexShard.segmentStats(flags.includeSegmentFileSizes());
-                    break;
-                case Translog:
-                    translog = indexShard.translogStats();
-                    break;
-                case Suggest:
-                    // skip
-                    break;
-                case RequestCache:
-                    requestCache = indexShard.requestCache().stats();
-                    break;
-                case Recovery:
-                    recoveryStats = indexShard.recoveryStats();
-                    break;
-                default:
-                    throw new IllegalStateException("Unknown Flag: " + flag);
+            try {
+                switch (flag) {
+                    case Docs:
+                        docs = indexShard.docStats();
+                        break;
+                    case Store:
+                        store = indexShard.storeStats();
+                        break;
+                    case Indexing:
+                        indexing = indexShard.indexingStats();
+                        break;
+                    case Get:
+                        get = indexShard.getStats();
+                        break;
+                    case Search:
+                        search = indexShard.searchStats(flags.groups());
+                        break;
+                    case Merge:
+                        merge = indexShard.mergeStats();
+                        break;
+                    case Refresh:
+                        refresh = indexShard.refreshStats();
+                        break;
+                    case Flush:
+                        flush = indexShard.flushStats();
+                        break;
+                    case Warmer:
+                        warmer = indexShard.warmerStats();
+                        break;
+                    case QueryCache:
+                        queryCache = indicesQueryCache.getStats(indexShard.shardId());
+                        break;
+                    case FieldData:
+                        fieldData = indexShard.fieldDataStats(flags.fieldDataFields());
+                        break;
+                    case Completion:
+                        completion = indexShard.completionStats(flags.completionDataFields());
+                        break;
+                    case Segments:
+                        segments = indexShard.segmentStats(flags.includeSegmentFileSizes(), flags.includeUnloadedSegments());
+                        break;
+                    case Translog:
+                        translog = indexShard.translogStats();
+                        break;
+                    case RequestCache:
+                        requestCache = indexShard.requestCache().stats();
+                        break;
+                    case Recovery:
+                        recoveryStats = indexShard.recoveryStats();
+                        break;
+                    default:
+                        throw new IllegalStateException("Unknown Flag: " + flag);
+                }
+            } catch (AlreadyClosedException e) {
+                // shard is closed - no stats is fine
             }
         }
     }
 
     public CommonStats(StreamInput in) throws IOException {
-        docs = in.readOptionalStreamable(DocsStats::new);
-        store = in.readOptionalStreamable(StoreStats::new);
-        indexing = in.readOptionalStreamable(IndexingStats::new);
-        get = in.readOptionalStreamable(GetStats::new);
+        docs = in.readOptionalWriteable(DocsStats::new);
+        store = in.readOptionalWriteable(StoreStats::new);
+        indexing = in.readOptionalWriteable(IndexingStats::new);
+        get = in.readOptionalWriteable(GetStats::new);
         search = in.readOptionalWriteable(SearchStats::new);
-        merge = in.readOptionalStreamable(MergeStats::new);
-        refresh =  in.readOptionalStreamable(RefreshStats::new);
-        flush =  in.readOptionalStreamable(FlushStats::new);
-        warmer =  in.readOptionalStreamable(WarmerStats::new);
-        queryCache = in.readOptionalStreamable(QueryCacheStats::new);
-        fieldData =  in.readOptionalStreamable(FieldDataStats::new);
-        completion =  in.readOptionalStreamable(CompletionStats::new);
-        segments =  in.readOptionalStreamable(SegmentsStats::new);
-        translog = in.readOptionalStreamable(TranslogStats::new);
-        requestCache = in.readOptionalStreamable(RequestCacheStats::new);
-        recoveryStats = in.readOptionalStreamable(RecoveryStats::new);
+        merge = in.readOptionalWriteable(MergeStats::new);
+        refresh = in.readOptionalWriteable(RefreshStats::new);
+        flush = in.readOptionalWriteable(FlushStats::new);
+        warmer = in.readOptionalWriteable(WarmerStats::new);
+        queryCache = in.readOptionalWriteable(QueryCacheStats::new);
+        fieldData = in.readOptionalWriteable(FieldDataStats::new);
+        completion = in.readOptionalWriteable(CompletionStats::new);
+        segments = in.readOptionalWriteable(SegmentsStats::new);
+        translog = in.readOptionalWriteable(TranslogStats::new);
+        requestCache = in.readOptionalWriteable(RequestCacheStats::new);
+        recoveryStats = in.readOptionalWriteable(RecoveryStats::new);
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
-        out.writeOptionalStreamable(docs);
-        out.writeOptionalStreamable(store);
-        out.writeOptionalStreamable(indexing);
-        out.writeOptionalStreamable(get);
+        out.writeOptionalWriteable(docs);
+        out.writeOptionalWriteable(store);
+        out.writeOptionalWriteable(indexing);
+        out.writeOptionalWriteable(get);
         out.writeOptionalWriteable(search);
-        out.writeOptionalStreamable(merge);
-        out.writeOptionalStreamable(refresh);
-        out.writeOptionalStreamable(flush);
-        out.writeOptionalStreamable(warmer);
-        out.writeOptionalStreamable(queryCache);
-        out.writeOptionalStreamable(fieldData);
-        out.writeOptionalStreamable(completion);
-        out.writeOptionalStreamable(segments);
-        out.writeOptionalStreamable(translog);
-        out.writeOptionalStreamable(requestCache);
-        out.writeOptionalStreamable(recoveryStats);
+        out.writeOptionalWriteable(merge);
+        out.writeOptionalWriteable(refresh);
+        out.writeOptionalWriteable(flush);
+        out.writeOptionalWriteable(warmer);
+        out.writeOptionalWriteable(queryCache);
+        out.writeOptionalWriteable(fieldData);
+        out.writeOptionalWriteable(completion);
+        out.writeOptionalWriteable(segments);
+        out.writeOptionalWriteable(translog);
+        out.writeOptionalWriteable(requestCache);
+        out.writeOptionalWriteable(recoveryStats);
     }
 
     public void add(CommonStats stats) {

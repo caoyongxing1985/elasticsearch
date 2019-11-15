@@ -20,7 +20,6 @@
 package org.elasticsearch.script.mustache;
 
 import org.elasticsearch.client.node.NodeClient;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.rest.BaseRestHandler;
 import org.elasticsearch.rest.RestController;
@@ -34,8 +33,8 @@ import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
 public class RestRenderSearchTemplateAction extends BaseRestHandler {
-    public RestRenderSearchTemplateAction(Settings settings, RestController controller) {
-        super(settings);
+
+    public RestRenderSearchTemplateAction(RestController controller) {
         controller.registerHandler(GET, "/_render/template", this);
         controller.registerHandler(POST, "/_render/template", this);
         controller.registerHandler(GET, "/_render/template/{id}", this);
@@ -52,7 +51,7 @@ public class RestRenderSearchTemplateAction extends BaseRestHandler {
         // Creates the render template request
         SearchTemplateRequest renderRequest;
         try (XContentParser parser = request.contentOrSourceParamParser()) {
-            renderRequest = RestSearchTemplateAction.parse(parser);
+            renderRequest = SearchTemplateRequest.fromXContent(parser);
         }
         renderRequest.setSimulate(true);
 

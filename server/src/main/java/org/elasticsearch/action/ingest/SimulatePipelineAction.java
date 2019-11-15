@@ -19,25 +19,14 @@
 
 package org.elasticsearch.action.ingest;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class SimulatePipelineAction extends Action<SimulatePipelineRequest, SimulatePipelineResponse, SimulatePipelineRequestBuilder> {
+public class SimulatePipelineAction extends ActionType<SimulatePipelineResponse> {
 
     public static final SimulatePipelineAction INSTANCE = new SimulatePipelineAction();
     public static final String NAME = "cluster:admin/ingest/pipeline/simulate";
 
     public SimulatePipelineAction() {
-        super(NAME);
-    }
-
-    @Override
-    public SimulatePipelineRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new SimulatePipelineRequestBuilder(client, this);
-    }
-
-    @Override
-    public SimulatePipelineResponse newResponse() {
-        return new SimulatePipelineResponse();
+        super(NAME, SimulatePipelineResponse::new);
     }
 }

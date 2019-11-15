@@ -16,17 +16,20 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-//TODO(simonw): can all these classes go into org.elasticsearch.ingest?
 
 package org.elasticsearch.ingest;
 
 import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.common.collect.Tuple;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
+import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 
 /**
@@ -41,16 +44,33 @@ public class CompoundProcessor implements Processor {
     private final boolean ignoreFailure;
     private final List<Processor> processors;
     private final List<Processor> onFailureProcessors;
+    private final List<Tuple<Processor, IngestMetric>> processorsWithMetrics;
+    private final LongSupplier relativeTimeProvider;
+
+    CompoundProcessor(LongSupplier relativeTimeProvider, Processor... processor) {
+        this(false, Arrays.asList(processor), Collections.emptyList(), relativeTimeProvider);
+    }
 
     public CompoundProcessor(Processor... processor) {
         this(false, Arrays.asList(processor), Collections.emptyList());
     }
 
     public CompoundProcessor(boolean ignoreFailure, List<Processor> processors, List<Processor> onFailureProcessors) {
+        this(ignoreFailure, processors, onFailureProcessors, System::nanoTime);
+    }
+    CompoundProcessor(boolean ignoreFailure, List<Processor> processors, List<Processor> onFailureProcessors,
+                      LongSupplier relativeTimeProvider) {
         super();
         this.ignoreFailure = ignoreFailure;
         this.processors = processors;
         this.onFailureProcessors = onFailureProcessors;
+        this.relativeTimeProvider = relativeTimeProvider;
+        this.processorsWithMetrics = new ArrayList<>(processors.size());
+        processors.forEach(p -> processorsWithMetrics.add(new Tuple<>(p, new IngestMetric())));
+    }
+
+    List<Tuple<Processor, IngestMetric>> getProcessorsWithMetrics() {
+        return processorsWithMetrics;
     }
 
     public boolean isIgnoreFailure() {
@@ -94,40 +114,79 @@ public class CompoundProcessor implements Processor {
     }
 
     @Override
-    public void execute(IngestDocument ingestDocument) throws Exception {
-        for (Processor processor : processors) {
-            try {
-                processor.execute(ingestDocument);
-            } catch (Exception e) {
-                if (ignoreFailure) {
-                    continue;
-                }
-
-                ElasticsearchException compoundProcessorException =
-                        newCompoundProcessorException(e, processor.getType(), processor.getTag());
-                if (onFailureProcessors.isEmpty()) {
-                    throw compoundProcessorException;
-                } else {
-                    executeOnFailure(ingestDocument, compoundProcessorException);
-                    break;
-                }
-            }
-        }
+    public IngestDocument execute(IngestDocument ingestDocument) throws Exception {
+        throw new UnsupportedOperationException("this method should not get executed");
     }
 
-    void executeOnFailure(IngestDocument ingestDocument, ElasticsearchException exception) throws Exception {
-        try {
-            putFailureMetadata(ingestDocument, exception);
-            for (Processor processor : onFailureProcessors) {
-                try {
-                    processor.execute(ingestDocument);
-                } catch (Exception e) {
-                    throw newCompoundProcessorException(e, processor.getType(), processor.getTag());
+    @Override
+    public void execute(IngestDocument ingestDocument, BiConsumer<IngestDocument, Exception> handler) {
+        innerExecute(0, ingestDocument, handler);
+    }
+
+    void innerExecute(int currentProcessor, IngestDocument ingestDocument, BiConsumer<IngestDocument, Exception> handler) {
+        if (currentProcessor == processorsWithMetrics.size()) {
+            handler.accept(ingestDocument, null);
+            return;
+        }
+
+        Tuple<Processor, IngestMetric> processorWithMetric = processorsWithMetrics.get(currentProcessor);
+        final Processor processor = processorWithMetric.v1();
+        final IngestMetric metric = processorWithMetric.v2();
+        final long startTimeInNanos = relativeTimeProvider.getAsLong();
+        metric.preIngest();
+        processor.execute(ingestDocument, (result, e) -> {
+            long ingestTimeInMillis = TimeUnit.NANOSECONDS.toMillis(relativeTimeProvider.getAsLong() - startTimeInNanos);
+            metric.postIngest(ingestTimeInMillis);
+
+            if (e != null) {
+                metric.ingestFailed();
+                if (ignoreFailure) {
+                    innerExecute(currentProcessor + 1, ingestDocument, handler);
+                } else {
+                    IngestProcessorException compoundProcessorException =
+                        newCompoundProcessorException(e, processor.getType(), processor.getTag());
+                    if (onFailureProcessors.isEmpty()) {
+                        handler.accept(null, compoundProcessorException);
+                    } else {
+                        executeOnFailureAsync(0, ingestDocument, compoundProcessorException, handler);
+                    }
+                }
+            } else {
+                if (result != null) {
+                    innerExecute(currentProcessor + 1, result, handler);
+                } else {
+                    handler.accept(null, null);
                 }
             }
-        } finally {
-            removeFailureMetadata(ingestDocument);
+        });
+    }
+
+    void executeOnFailureAsync(int currentOnFailureProcessor, IngestDocument ingestDocument, ElasticsearchException exception,
+                               BiConsumer<IngestDocument, Exception> handler) {
+        if (currentOnFailureProcessor == 0) {
+            putFailureMetadata(ingestDocument, exception);
         }
+
+        if (currentOnFailureProcessor == onFailureProcessors.size()) {
+            removeFailureMetadata(ingestDocument);
+            handler.accept(ingestDocument, null);
+            return;
+        }
+
+        final Processor onFailureProcessor = onFailureProcessors.get(currentOnFailureProcessor);
+        onFailureProcessor.execute(ingestDocument, (result, e) -> {
+            if (e != null) {
+                removeFailureMetadata(ingestDocument);
+                handler.accept(null, newCompoundProcessorException(e, onFailureProcessor.getType(), onFailureProcessor.getTag()));
+                return;
+            }
+            if (result == null) {
+                removeFailureMetadata(ingestDocument);
+                handler.accept(null, null);
+                return;
+            }
+            executeOnFailureAsync(currentOnFailureProcessor + 1, ingestDocument, exception, handler);
+        });
     }
 
     private void putFailureMetadata(IngestDocument ingestDocument, ElasticsearchException cause) {
@@ -148,12 +207,12 @@ public class CompoundProcessor implements Processor {
         ingestMetadata.remove(ON_FAILURE_PROCESSOR_TAG_FIELD);
     }
 
-    private ElasticsearchException newCompoundProcessorException(Exception e, String processorType, String processorTag) {
-        if (e instanceof ElasticsearchException && ((ElasticsearchException)e).getHeader("processor_type") != null) {
-            return (ElasticsearchException) e;
+    private IngestProcessorException newCompoundProcessorException(Exception e, String processorType, String processorTag) {
+        if (e instanceof IngestProcessorException && ((IngestProcessorException) e).getHeader("processor_type") != null) {
+            return (IngestProcessorException) e;
         }
 
-        ElasticsearchException exception = new ElasticsearchException(new IllegalArgumentException(e));
+        IngestProcessorException exception = new IngestProcessorException(e);
 
         if (processorType != null) {
             exception.addHeader("processor_type", processorType);
@@ -164,4 +223,5 @@ public class CompoundProcessor implements Processor {
 
         return exception;
     }
+
 }

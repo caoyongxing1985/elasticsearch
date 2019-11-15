@@ -19,25 +19,14 @@
 
 package org.elasticsearch.action.admin.cluster.node.stats;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class NodesStatsAction extends Action<NodesStatsRequest, NodesStatsResponse, NodesStatsRequestBuilder> {
+public class NodesStatsAction extends ActionType<NodesStatsResponse> {
 
     public static final NodesStatsAction INSTANCE = new NodesStatsAction();
     public static final String NAME = "cluster:monitor/nodes/stats";
 
     private NodesStatsAction() {
-        super(NAME);
-    }
-
-    @Override
-    public NodesStatsResponse newResponse() {
-        return new NodesStatsResponse();
-    }
-
-    @Override
-    public NodesStatsRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new NodesStatsRequestBuilder(client, this);
+        super(NAME, NodesStatsResponse::new);
     }
 }

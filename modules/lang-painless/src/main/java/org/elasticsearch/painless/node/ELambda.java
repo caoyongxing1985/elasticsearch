@@ -19,27 +19,25 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.AnalyzerCaster;
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Method;
-import org.elasticsearch.painless.Definition.def;
+import org.elasticsearch.painless.ClassWriter;
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.FunctionRef;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Locals.Variable;
 import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
-import org.elasticsearch.painless.node.SFunction.FunctionReserved;
+import org.elasticsearch.painless.ScriptRoot;
+import org.elasticsearch.painless.lookup.PainlessLookupUtility;
+import org.elasticsearch.painless.lookup.PainlessMethod;
+import org.elasticsearch.painless.lookup.def;
 import org.objectweb.asm.Opcodes;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
-
-import static org.elasticsearch.painless.WriterConstants.LAMBDA_BOOTSTRAP_HANDLE;
 
 /**
  * Lambda expression node.
@@ -66,12 +64,14 @@ import static org.elasticsearch.painless.WriterConstants.LAMBDA_BOOTSTRAP_HANDLE
  */
 public final class ELambda extends AExpression implements ILambda {
 
-    private final String name;
-    private final FunctionReserved reserved;
     private final List<String> paramTypeStrs;
     private final List<String> paramNameStrs;
     private final List<AStatement> statements;
 
+    private CompilerSettings settings;
+
+    // extracted variables required to determine captures
+    private final Set<String> extractedVariables;
     // desugared synthetic method (lambda body)
     private SFunction desugared;
     // captured variables
@@ -81,29 +81,40 @@ public final class ELambda extends AExpression implements ILambda {
     // dynamic parent, deferred until link time
     private String defPointer;
 
-    public ELambda(String name, FunctionReserved reserved,
-                   Location location, List<String> paramTypes, List<String> paramNames,
+    public ELambda(Location location,
+                   List<String> paramTypes, List<String> paramNames,
                    List<AStatement> statements) {
         super(location);
-        this.name = Objects.requireNonNull(name);
-        this.reserved = Objects.requireNonNull(reserved);
         this.paramTypeStrs = Collections.unmodifiableList(paramTypes);
         this.paramNameStrs = Collections.unmodifiableList(paramNames);
         this.statements = Collections.unmodifiableList(statements);
+
+        this.extractedVariables = new HashSet<>();
+    }
+
+    @Override
+    void storeSettings(CompilerSettings settings) {
+        for (AStatement statement : statements) {
+            statement.storeSettings(settings);
+        }
+
+        this.settings = settings;
     }
 
     @Override
     void extractVariables(Set<String> variables) {
         for (AStatement statement : statements) {
-            statement.extractVariables(variables);
+            statement.extractVariables(extractedVariables);
         }
+
+        variables.addAll(extractedVariables);
     }
 
     @Override
-    void analyze(Locals locals) {
+    void analyze(ScriptRoot scriptRoot, Locals locals) {
         Class<?> returnType;
         List<String> actualParamTypeStrs;
-        Method interfaceMethod;
+        PainlessMethod interfaceMethod;
         // inspect the target first, set interface method if we know it.
         if (expected == null) {
             interfaceMethod = null;
@@ -118,42 +129,38 @@ public final class ELambda extends AExpression implements ILambda {
                     actualParamTypeStrs.add(type);
                 }
             }
+
         } else {
             // we know the method statically, infer return type and any unknown/def types
-            interfaceMethod = locals.getDefinition().ClassToType(expected).struct.functionalMethod;
+            interfaceMethod = scriptRoot.getPainlessLookup().lookupFunctionalInterfacePainlessMethod(expected);
             if (interfaceMethod == null) {
-                throw createError(new IllegalArgumentException("Cannot pass lambda to [" + Definition.ClassToName(expected) +
-                                                               "], not a functional interface"));
+                throw createError(new IllegalArgumentException("Cannot pass lambda to " +
+                        "[" + PainlessLookupUtility.typeToCanonicalTypeName(expected) + "], not a functional interface"));
             }
             // check arity before we manipulate parameters
-            if (interfaceMethod.arguments.size() != paramTypeStrs.size())
-                throw new IllegalArgumentException("Incorrect number of parameters for [" + interfaceMethod.name +
-                                                   "] in [" + Definition.ClassToName(expected) + "]");
+            if (interfaceMethod.typeParameters.size() != paramTypeStrs.size())
+                throw new IllegalArgumentException("Incorrect number of parameters for [" + interfaceMethod.javaMethod.getName() +
+                        "] in [" + PainlessLookupUtility.typeToCanonicalTypeName(expected) + "]");
             // for method invocation, its allowed to ignore the return value
-            if (interfaceMethod.rtn == void.class) {
+            if (interfaceMethod.returnType == void.class) {
                 returnType = def.class;
             } else {
-                returnType = interfaceMethod.rtn;
+                returnType = interfaceMethod.returnType;
             }
             // replace any null types with the actual type
             actualParamTypeStrs = new ArrayList<>(paramTypeStrs.size());
             for (int i = 0; i < paramTypeStrs.size(); i++) {
                 String paramType = paramTypeStrs.get(i);
                 if (paramType == null) {
-                    actualParamTypeStrs.add(Definition.ClassToName(interfaceMethod.arguments.get(i)));
+                    actualParamTypeStrs.add(PainlessLookupUtility.typeToCanonicalTypeName(interfaceMethod.typeParameters.get(i)));
                 } else {
                     actualParamTypeStrs.add(paramType);
                 }
             }
         }
-        // gather any variables used by the lambda body first.
-        Set<String> variables = new HashSet<>();
-        for (AStatement statement : statements) {
-            statement.extractVariables(variables);
-        }
         // any of those variables defined in our scope need to be captured
         captures = new ArrayList<>();
-        for (String variable : variables) {
+        for (String variable : extractedVariables) {
             if (locals.hasVariable(variable)) {
                 captures.add(locals.getVariable(location, variable));
             }
@@ -162,18 +169,23 @@ public final class ELambda extends AExpression implements ILambda {
         List<String> paramTypes = new ArrayList<>(captures.size() + actualParamTypeStrs.size());
         List<String> paramNames = new ArrayList<>(captures.size() + paramNameStrs.size());
         for (Variable var : captures) {
-            paramTypes.add(Definition.ClassToName(var.clazz));
+            paramTypes.add(PainlessLookupUtility.typeToCanonicalTypeName(var.clazz));
             paramNames.add(var.name);
         }
         paramTypes.addAll(actualParamTypeStrs);
         paramNames.addAll(paramNameStrs);
 
         // desugar lambda body into a synthetic method
-        desugared = new SFunction(reserved, location, Definition.ClassToName(returnType), name,
-                                            paramTypes, paramNames, statements, true);
-        desugared.generateSignature(locals.getDefinition());
-        desugared.analyze(Locals.newLambdaScope(locals.getProgramScope(), returnType,
-                                                desugared.parameters, captures.size(), reserved.getMaxLoopCounter()));
+        String name = scriptRoot.getNextSyntheticName("lambda");
+        desugared = new SFunction(
+                location, PainlessLookupUtility.typeToCanonicalTypeName(returnType), name, paramTypes, paramNames,
+                new SBlock(location, statements), true);
+        desugared.storeSettings(settings);
+        desugared.generateSignature(scriptRoot.getPainlessLookup());
+        desugared.analyze(scriptRoot, Locals.newLambdaScope(locals.getProgramScope(), desugared.name, returnType,
+                                                desugared.parameters, captures.size(), settings.getMaxLoopCounter()));
+        scriptRoot.getFunctionTable().addFunction(desugared.name, desugared.returnType, desugared.typeParameters, true);
+        scriptRoot.getClassNode().addFunction(desugared);
 
         // setup method reference to synthetic method
         if (expected == null) {
@@ -182,59 +194,32 @@ public final class ELambda extends AExpression implements ILambda {
             defPointer = "Sthis." + name + "," + captures.size();
         } else {
             defPointer = null;
-            try {
-                ref = new FunctionRef(expected, interfaceMethod, desugared.method, captures.size());
-            } catch (IllegalArgumentException e) {
-                throw createError(e);
-            }
-
-            // check casts between the interface method and the delegate method are legal
-            for (int i = 0; i < interfaceMethod.arguments.size(); ++i) {
-                Class<?> from = interfaceMethod.arguments.get(i);
-                Class<?> to = desugared.parameters.get(i + captures.size()).clazz;
-                AnalyzerCaster.getLegalCast(location, from, to, false, true);
-            }
-
-            if (interfaceMethod.rtn != void.class) {
-                AnalyzerCaster.getLegalCast(location, desugared.rtnType, interfaceMethod.rtn, false, true);
-            }
-
+            ref = FunctionRef.create(scriptRoot.getPainlessLookup(), scriptRoot.getFunctionTable(),
+                    location, expected, "this", desugared.name, captures.size());
             actual = expected;
         }
     }
 
     @Override
-    void write(MethodWriter writer, Globals globals) {
-        writer.writeDebugInfo(location);
+    void write(ClassWriter classWriter, MethodWriter methodWriter, Globals globals) {
+        methodWriter.writeDebugInfo(location);
 
         if (ref != null) {
-            writer.writeDebugInfo(location);
+            methodWriter.writeDebugInfo(location);
             // load captures
             for (Variable capture : captures) {
-                writer.visitVarInsn(MethodWriter.getType(capture.clazz).getOpcode(Opcodes.ILOAD), capture.getSlot());
+                methodWriter.visitVarInsn(MethodWriter.getType(capture.clazz).getOpcode(Opcodes.ILOAD), capture.getSlot());
             }
 
-            writer.invokeDynamic(
-                ref.interfaceMethodName,
-                ref.factoryDescriptor,
-                LAMBDA_BOOTSTRAP_HANDLE,
-                ref.interfaceType,
-                ref.delegateClassName,
-                ref.delegateInvokeType,
-                ref.delegateMethodName,
-                ref.delegateType
-            );
+            methodWriter.invokeLambdaCall(ref);
         } else {
             // placeholder
-            writer.push((String)null);
+            methodWriter.push((String)null);
             // load captures
             for (Variable capture : captures) {
-                writer.visitVarInsn(MethodWriter.getType(capture.clazz).getOpcode(Opcodes.ILOAD), capture.getSlot());
+                methodWriter.visitVarInsn(MethodWriter.getType(capture.clazz).getOpcode(Opcodes.ILOAD), capture.getSlot());
             }
         }
-
-        // add synthetic method to the queue to be written
-        globals.addSyntheticMethod(desugared);
     }
 
     @Override

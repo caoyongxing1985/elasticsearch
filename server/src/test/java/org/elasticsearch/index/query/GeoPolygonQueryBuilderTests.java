@@ -19,18 +19,19 @@
 
 package org.elasticsearch.index.query;
 
-import org.locationtech.jts.geom.Coordinate;
+import org.apache.lucene.document.LatLonDocValuesField;
+import org.apache.lucene.document.LatLonPoint;
+import org.apache.lucene.search.IndexOrDocValuesQuery;
 import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.Query;
 import org.elasticsearch.common.ParsingException;
 import org.elasticsearch.common.geo.GeoPoint;
 import org.elasticsearch.common.geo.builders.ShapeBuilder;
-import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.search.internal.SearchContext;
+import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.test.AbstractQueryTestCase;
 import org.elasticsearch.test.geo.RandomShapeGenerator;
 import org.elasticsearch.test.geo.RandomShapeGenerator.ShapeType;
+import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.spatial4j.shape.jts.JtsGeometry;
 
 import java.io.IOException;
@@ -46,8 +47,9 @@ import static org.hamcrest.CoreMatchers.notNullValue;
 public class GeoPolygonQueryBuilderTests extends AbstractQueryTestCase<GeoPolygonQueryBuilder> {
     @Override
     protected GeoPolygonQueryBuilder doCreateTestQueryBuilder() {
+        String fieldName = randomFrom(GEO_POINT_FIELD_NAME, GEO_POINT_ALIAS_FIELD_NAME);
         List<GeoPoint> polygon = randomPolygon();
-        GeoPolygonQueryBuilder builder = new GeoPolygonQueryBuilder(GEO_POINT_FIELD_NAME, polygon);
+        GeoPolygonQueryBuilder builder = new GeoPolygonQueryBuilder(fieldName, polygon);
         if (randomBoolean()) {
             builder.setValidationMethod(randomFrom(GeoValidationMethod.values()));
         }
@@ -55,34 +57,41 @@ public class GeoPolygonQueryBuilderTests extends AbstractQueryTestCase<GeoPolygo
         if (randomBoolean()) {
             builder.ignoreUnmapped(randomBoolean());
         }
+
         return builder;
     }
 
     @Override
-    protected void doAssertLuceneQuery(GeoPolygonQueryBuilder queryBuilder, Query query, SearchContext context) throws IOException {
-        // todo LatLonPointInPolygon is package private
-    }
-
-    /**
-     * Overridden here to ensure the test is only run if at least one type is
-     * present in the mappings. Geo queries do not execute if the field is not
-     * explicitly mapped
-     */
-    @Override
-    public void testToQuery() throws IOException {
-        assumeTrue("test runs only when at least a type is registered", getCurrentTypes().length > 0);
-        super.testToQuery();
+    protected void doAssertLuceneQuery(GeoPolygonQueryBuilder queryBuilder, Query query, QueryShardContext context) throws IOException {
+        MappedFieldType fieldType = context.fieldMapper(queryBuilder.fieldName());
+        if (fieldType == null) {
+            assertTrue("Found no indexed geo query.", query instanceof MatchNoDocsQuery);
+        } else { // TODO: Test case when there are no docValues
+            Query indexQuery = ((IndexOrDocValuesQuery) query).getIndexQuery();
+            String expectedFieldName = expectedFieldName(queryBuilder.fieldName());
+            List<GeoPoint> points = queryBuilder.points();
+            double[] lats = new double[points.size()];
+            double[] lons = new double[points.size()];
+            for (int i =0; i < points.size(); i++) {
+                lats[i] = points.get(i).getLat();
+                lons[i] = points.get(i).getLon();
+            }
+            org.apache.lucene.geo.Polygon polygon = new org.apache.lucene.geo.Polygon(lats, lons);
+            assertEquals(LatLonPoint.newPolygonQuery(expectedFieldName, polygon), indexQuery);
+            Query dvQuery = ((IndexOrDocValuesQuery) query).getRandomAccessQuery();
+            assertEquals(LatLonDocValuesField.newSlowPolygonQuery(expectedFieldName, polygon), dvQuery);
+        }
     }
 
     private static List<GeoPoint> randomPolygon() {
-        ShapeBuilder shapeBuilder = null;
+        ShapeBuilder<?, ?, ?> shapeBuilder = null;
         // This is a temporary fix because sometimes the RandomShapeGenerator
         // returns null. This is if there is an error generating the polygon. So
         // in this case keep trying until we successfully generate one
         while (shapeBuilder == null) {
             shapeBuilder = RandomShapeGenerator.createShapeWithin(random(), null, ShapeType.POLYGON);
         }
-        JtsGeometry shape = (JtsGeometry) shapeBuilder.build();
+        JtsGeometry shape = (JtsGeometry) shapeBuilder.buildS4J();
         Coordinate[] coordinates = shape.getGeom().getCoordinates();
         ArrayList<GeoPoint> polygonPoints = new ArrayList<>();
         for (Coordinate coord : coordinates) {
@@ -139,7 +148,6 @@ public class GeoPolygonQueryBuilderTests extends AbstractQueryTestCase<GeoPolygo
     }
 
     public void testParsingAndToQuery1() throws IOException {
-        assumeTrue("test runs only when at least a type is registered", getCurrentTypes().length > 0);
         String query = "{\n" +
                 "    \"geo_polygon\":{\n" +
                 "        \"" + GEO_POINT_FIELD_NAME + "\":{\n" +
@@ -155,7 +163,6 @@ public class GeoPolygonQueryBuilderTests extends AbstractQueryTestCase<GeoPolygo
     }
 
     public void testParsingAndToQuery2() throws IOException {
-        assumeTrue("test runs only when at least a type is registered", getCurrentTypes().length > 0);
         String query = "{\n" +
                 "    \"geo_polygon\":{\n" +
                 "        \"" + GEO_POINT_FIELD_NAME + "\":{\n" +
@@ -180,7 +187,6 @@ public class GeoPolygonQueryBuilderTests extends AbstractQueryTestCase<GeoPolygo
     }
 
     public void testParsingAndToQuery3() throws IOException {
-        assumeTrue("test runs only when at least a type is registered", getCurrentTypes().length > 0);
         String query = "{\n" +
                 "    \"geo_polygon\":{\n" +
                 "        \"" + GEO_POINT_FIELD_NAME + "\":{\n" +
@@ -196,7 +202,6 @@ public class GeoPolygonQueryBuilderTests extends AbstractQueryTestCase<GeoPolygo
     }
 
     public void testParsingAndToQuery4() throws IOException {
-        assumeTrue("test runs only when at least a type is registered", getCurrentTypes().length > 0);
         String query = "{\n" +
                 "    \"geo_polygon\":{\n" +
                 "        \"" + GEO_POINT_FIELD_NAME + "\":{\n" +
@@ -213,9 +218,8 @@ public class GeoPolygonQueryBuilderTests extends AbstractQueryTestCase<GeoPolygo
 
     private void assertGeoPolygonQuery(String query) throws IOException {
         QueryShardContext context = createShardContext();
-        Query parsedQuery = parseQuery(query).toQuery(context);
-        // todo LatLonPointInPolygon is package private, need a closeTo check on the query
-        // since some points can be computed from the geohash
+        GeoPolygonQueryBuilder queryBuilder = (GeoPolygonQueryBuilder) parseQuery(query);
+        doAssertLuceneQuery(queryBuilder, queryBuilder.toQuery(context), context);
     }
 
     public void testFromJson() throws IOException {
@@ -235,12 +239,6 @@ public class GeoPolygonQueryBuilderTests extends AbstractQueryTestCase<GeoPolygo
         assertEquals(json, 4, parsed.points().size());
     }
 
-    @Override
-    public void testMustRewrite() throws IOException {
-        assumeTrue("test runs only when at least a type is registered", getCurrentTypes().length > 0);
-        super.testMustRewrite();
-    }
-
     public void testIgnoreUnmapped() throws IOException {
         List<GeoPoint> polygon = randomPolygon();
         final GeoPolygonQueryBuilder queryBuilder = new GeoPolygonQueryBuilder("unmapped", polygon);
@@ -253,5 +251,38 @@ public class GeoPolygonQueryBuilderTests extends AbstractQueryTestCase<GeoPolygo
         failingQueryBuilder.ignoreUnmapped(false);
         QueryShardException e = expectThrows(QueryShardException.class, () -> failingQueryBuilder.toQuery(createShardContext()));
         assertThat(e.getMessage(), containsString("failed to find geo_point field [unmapped]"));
+    }
+
+    public void testPointValidation() throws IOException {
+        QueryShardContext context = createShardContext();
+        String queryInvalidLat = "{\n" +
+            "    \"geo_polygon\":{\n" +
+            "        \"" + GEO_POINT_FIELD_NAME + "\":{\n" +
+            "            \"points\":[\n" +
+            "                [-70, 140],\n" +
+            "                [-80, 30],\n" +
+            "                [-90, 20]\n" +
+            "            ]\n" +
+            "        }\n" +
+            "    }\n" +
+            "}\n";
+
+        QueryShardException e1 = expectThrows(QueryShardException.class, () -> parseQuery(queryInvalidLat).toQuery(context));
+        assertThat(e1.getMessage(), containsString("illegal latitude value [140.0] for [geo_polygon]"));
+
+        String queryInvalidLon = "{\n" +
+            "    \"geo_polygon\":{\n" +
+            "        \"" + GEO_POINT_FIELD_NAME + "\":{\n" +
+            "            \"points\":[\n" +
+            "                [-70, 40],\n" +
+            "                [-80, 30],\n" +
+            "                [-190, 20]\n" +
+            "            ]\n" +
+            "        }\n" +
+            "    }\n" +
+            "}\n";
+
+        QueryShardException e2 = expectThrows(QueryShardException.class, () -> parseQuery(queryInvalidLon).toQuery(context));
+        assertThat(e2.getMessage(), containsString("illegal longitude value [-190.0] for [geo_polygon]"));
     }
 }

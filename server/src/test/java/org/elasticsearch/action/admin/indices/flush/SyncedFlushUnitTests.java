@@ -85,13 +85,12 @@ public class SyncedFlushUnitTests extends ESTestCase {
         BytesStreamOutput out = new BytesStreamOutput();
         testPlan.result.writeTo(out);
         StreamInput in = out.bytes().streamInput();
-        SyncedFlushResponse readResponse = new SyncedFlushResponse();
-        readResponse.readFrom(in);
+        SyncedFlushResponse readResponse = new SyncedFlushResponse(in);
         assertThat(readResponse.totalShards(), equalTo(testPlan.totalCounts.total));
         assertThat(readResponse.successfulShards(), equalTo(testPlan.totalCounts.successful));
         assertThat(readResponse.failedShards(), equalTo(testPlan.totalCounts.failed));
         assertThat(readResponse.restStatus(), equalTo(testPlan.totalCounts.failed > 0 ? RestStatus.CONFLICT : RestStatus.OK));
-        assertThat(readResponse.shardsResultPerIndex.size(), equalTo(testPlan.result.getShardsResultPerIndex().size()));
+        assertThat(readResponse.getShardsResultPerIndex().size(), equalTo(testPlan.result.getShardsResultPerIndex().size()));
         for (Map.Entry<String, List<ShardsSyncedFlushResult>> entry : readResponse.getShardsResultPerIndex().entrySet()) {
             List<ShardsSyncedFlushResult> originalShardsResults = testPlan.result.getShardsResultPerIndex().get(entry.getKey());
             assertNotNull(originalShardsResults);
@@ -107,7 +106,8 @@ public class SyncedFlushUnitTests extends ESTestCase {
                 assertThat(originalShardResult.syncId(), equalTo(readShardResult.syncId()));
                 assertThat(originalShardResult.totalShards(), equalTo(readShardResult.totalShards()));
                 assertThat(originalShardResult.failedShards().size(), equalTo(readShardResult.failedShards().size()));
-                for (Map.Entry<ShardRouting, SyncedFlushService.ShardSyncedFlushResponse> shardEntry : originalShardResult.failedShards().entrySet()) {
+                for (Map.Entry<ShardRouting, SyncedFlushService.ShardSyncedFlushResponse> shardEntry
+                        : originalShardResult.failedShards().entrySet()) {
                     SyncedFlushService.ShardSyncedFlushResponse readShardResponse = readShardResult.failedShards().get(shardEntry.getKey());
                     assertNotNull(readShardResponse);
                     SyncedFlushService.ShardSyncedFlushResponse originalShardResponse = shardEntry.getValue();
@@ -115,8 +115,10 @@ public class SyncedFlushUnitTests extends ESTestCase {
                     assertThat(originalShardResponse.success(), equalTo(readShardResponse.success()));
                 }
                 assertThat(originalShardResult.shardResponses().size(), equalTo(readShardResult.shardResponses().size()));
-                for (Map.Entry<ShardRouting, SyncedFlushService.ShardSyncedFlushResponse> shardEntry : originalShardResult.shardResponses().entrySet()) {
-                    SyncedFlushService.ShardSyncedFlushResponse readShardResponse = readShardResult.shardResponses().get(shardEntry.getKey());
+                for (Map.Entry<ShardRouting, SyncedFlushService.ShardSyncedFlushResponse> shardEntry
+                        : originalShardResult.shardResponses().entrySet()) {
+                    SyncedFlushService.ShardSyncedFlushResponse readShardResponse = readShardResult.shardResponses()
+                        .get(shardEntry.getKey());
                     assertNotNull(readShardResponse);
                     SyncedFlushService.ShardSyncedFlushResponse originalShardResponse = shardEntry.getValue();
                     assertThat(originalShardResponse.failureReason(), equalTo(readShardResponse.failureReason()));
@@ -157,8 +159,8 @@ public class SyncedFlushUnitTests extends ESTestCase {
                 } else {
                     Map<ShardRouting, SyncedFlushService.ShardSyncedFlushResponse> shardResponses = new HashMap<>();
                     for (int copy = 0; copy < replicas + 1; copy++) {
-                        final ShardRouting shardRouting = TestShardRouting.newShardRouting(index, shard, "node_" + shardId + "_" + copy, null,
-                            copy == 0, ShardRoutingState.STARTED);
+                        final ShardRouting shardRouting = TestShardRouting.newShardRouting(index, shard, "node_" + shardId + "_" + copy,
+                            null, copy == 0, ShardRoutingState.STARTED);
                         if (randomInt(5) < 2) {
                             // shard copy failure
                             failed++;
@@ -166,7 +168,7 @@ public class SyncedFlushUnitTests extends ESTestCase {
                             shardResponses.put(shardRouting, new SyncedFlushService.ShardSyncedFlushResponse("copy failure " + shardId));
                         } else {
                             successful++;
-                            shardResponses.put(shardRouting, new SyncedFlushService.ShardSyncedFlushResponse());
+                            shardResponses.put(shardRouting, new SyncedFlushService.ShardSyncedFlushResponse((String) null));
                         }
                     }
                     shardsResults.add(new ShardsSyncedFlushResult(shardId, "_sync_id_" + shard, replicas + 1, shardResponses));

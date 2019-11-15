@@ -19,19 +19,21 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Method;
-import org.elasticsearch.painless.Definition.MethodKey;
-import org.elasticsearch.painless.Definition.Struct;
-import org.elasticsearch.painless.Definition.def;
+import org.elasticsearch.painless.ClassWriter;
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
+import org.elasticsearch.painless.ScriptRoot;
+import org.elasticsearch.painless.lookup.PainlessMethod;
+import org.elasticsearch.painless.lookup.def;
 
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+
+import static org.elasticsearch.painless.lookup.PainlessLookupUtility.typeToCanonicalTypeName;
 
 /**
  * Represents a method call and defers to a child subnode.
@@ -53,6 +55,15 @@ public final class PCallInvoke extends AExpression {
     }
 
     @Override
+    void storeSettings(CompilerSettings settings) {
+        prefix.storeSettings(settings);
+
+        for (AExpression argument : arguments) {
+            argument.storeSettings(settings);
+        }
+    }
+
+    @Override
     void extractVariables(Set<String> variables) {
         prefix.extractVariables(variables);
 
@@ -62,31 +73,23 @@ public final class PCallInvoke extends AExpression {
     }
 
     @Override
-    void analyze(Locals locals) {
-        prefix.analyze(locals);
+    void analyze(ScriptRoot scriptRoot, Locals locals) {
+        prefix.analyze(scriptRoot, locals);
         prefix.expected = prefix.actual;
-        prefix = prefix.cast(locals);
+        prefix = prefix.cast(scriptRoot, locals);
 
-        if (prefix.actual.isArray()) {
-            throw createError(new IllegalArgumentException("Illegal call [" + name + "] on array type."));
-        }
-
-        Struct struct = locals.getDefinition().ClassToType(prefix.actual).struct;
-
-        if (prefix.actual.isPrimitive()) {
-            struct = locals.getDefinition().ClassToType(Definition.getBoxedType(prefix.actual)).struct;
-        }
-
-        MethodKey methodKey = new MethodKey(name, arguments.size());
-        Method method = prefix instanceof EStatic ? struct.staticMethods.get(methodKey) : struct.methods.get(methodKey);
-
-        if (method != null) {
-            sub = new PSubCallInvoke(location, method, prefix.actual, arguments);
-        } else if (prefix.actual == def.class) {
+        if (prefix.actual == def.class) {
             sub = new PSubDefCall(location, name, arguments);
         } else {
-            throw createError(new IllegalArgumentException(
-                "Unknown call [" + name + "] with [" + arguments.size() + "] arguments on type [" + struct.name + "]."));
+            PainlessMethod method =
+                    scriptRoot.getPainlessLookup().lookupPainlessMethod(prefix.actual, prefix instanceof EStatic, name, arguments.size());
+
+            if (method == null) {
+                throw createError(new IllegalArgumentException(
+                        "method [" + typeToCanonicalTypeName(prefix.actual) + ", " + name + "/" + arguments.size() + "] not found"));
+            }
+
+            sub = new PSubCallInvoke(location, method, prefix.actual, arguments);
         }
 
         if (nullSafe) {
@@ -95,16 +98,16 @@ public final class PCallInvoke extends AExpression {
 
         sub.expected = expected;
         sub.explicit = explicit;
-        sub.analyze(locals);
+        sub.analyze(scriptRoot, locals);
         actual = sub.actual;
 
         statement = true;
     }
 
     @Override
-    void write(MethodWriter writer, Globals globals) {
-        prefix.write(writer, globals);
-        sub.write(writer, globals);
+    void write(ClassWriter classWriter, MethodWriter methodWriter, Globals globals) {
+        prefix.write(classWriter, methodWriter, globals);
+        sub.write(classWriter, methodWriter, globals);
     }
 
     @Override

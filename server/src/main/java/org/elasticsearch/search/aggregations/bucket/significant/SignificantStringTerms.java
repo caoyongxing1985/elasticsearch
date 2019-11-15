@@ -57,7 +57,7 @@ public class SignificantStringTerms extends InternalMappedSignificantTerms<Signi
             subsetDf = in.readVLong();
             supersetDf = in.readVLong();
             score = in.readDouble();
-            aggregations = InternalAggregations.readAggregations(in);
+            aggregations = new InternalAggregations(in);
         }
 
         @Override
@@ -83,17 +83,12 @@ public class SignificantStringTerms extends InternalMappedSignificantTerms<Signi
 
         @Override
         public String getKeyAsString() {
-            return format.format(termBytes);
+            return format.format(termBytes).toString();
         }
 
         @Override
         public String getKey() {
             return getKeyAsString();
-        }
-
-        @Override
-        Bucket newBucket(long subsetDf, long subsetSize, long supersetDf, long supersetSize, InternalAggregations aggregations) {
-            return new Bucket(termBytes, subsetDf, subsetSize, supersetDf, supersetSize, aggregations, format);
         }
 
         @Override
@@ -103,6 +98,10 @@ public class SignificantStringTerms extends InternalMappedSignificantTerms<Signi
 
         @Override
         public boolean equals(Object obj) {
+            if (this == obj) return true;
+            if (obj == null || getClass() != obj.getClass()) return false;
+            if (super.equals(obj) == false) return false;
+
             return super.equals(obj) && Objects.equals(termBytes, ((SignificantStringTerms.Bucket) obj).termBytes);
         }
 
@@ -152,5 +151,11 @@ public class SignificantStringTerms extends InternalMappedSignificantTerms<Signi
     @Override
     protected Bucket[] createBucketsArray(int size) {
         return new Bucket[size];
+    }
+
+    @Override
+    Bucket createBucket(long subsetDf, long subsetSize, long supersetDf, long supersetSize,
+                        InternalAggregations aggregations, SignificantStringTerms.Bucket prototype) {
+        return new Bucket(prototype.termBytes, subsetDf, subsetSize, supersetDf, supersetSize, aggregations, format);
     }
 }

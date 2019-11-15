@@ -40,13 +40,10 @@ public class RestMultiGetAction extends BaseRestHandler {
     private final boolean allowExplicitIndex;
 
     public RestMultiGetAction(Settings settings, RestController controller) {
-        super(settings);
         controller.registerHandler(GET, "/_mget", this);
         controller.registerHandler(POST, "/_mget", this);
         controller.registerHandler(GET, "/{index}/_mget", this);
         controller.registerHandler(POST, "/{index}/_mget", this);
-        controller.registerHandler(GET, "/{index}/{type}/_mget", this);
-        controller.registerHandler(POST, "/{index}/{type}/_mget", this);
 
         this.allowExplicitIndex = MULTI_ALLOW_EXPLICIT_INDEX.get(settings);
     }
@@ -58,6 +55,7 @@ public class RestMultiGetAction extends BaseRestHandler {
 
     @Override
     public RestChannelConsumer prepareRequest(final RestRequest request, final NodeClient client) throws IOException {
+
         MultiGetRequest multiGetRequest = new MultiGetRequest();
         multiGetRequest.refresh(request.paramAsBoolean("refresh", multiGetRequest.refresh()));
         multiGetRequest.preference(request.param("preference"));
@@ -74,7 +72,7 @@ public class RestMultiGetAction extends BaseRestHandler {
 
         FetchSourceContext defaultFetchSource = FetchSourceContext.parseFromRestRequest(request);
         try (XContentParser parser = request.contentOrSourceParamParser()) {
-            multiGetRequest.add(request.param("index"), request.param("type"), sFields, defaultFetchSource,
+            multiGetRequest.add(request.param("index"), sFields, defaultFetchSource,
                 request.param("routing"), parser, allowExplicitIndex);
         }
 

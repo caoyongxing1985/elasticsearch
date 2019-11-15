@@ -21,6 +21,9 @@ package org.elasticsearch.action;
 
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.common.CheckedConsumer;
+import org.elasticsearch.common.CheckedFunction;
+import org.elasticsearch.common.CheckedRunnable;
+import org.elasticsearch.common.CheckedSupplier;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -71,6 +74,53 @@ public interface ActionListener<Response> {
     }
 
     /**
+     * Creates a listener that delegates all responses it receives to another listener.
+     *
+     * @param delegate ActionListener to wrap and delegate any exception to
+     * @param bc BiConsumer invoked with delegate listener and exception
+     * @param <T> Type of the listener
+     * @return Delegating listener
+     */
+    static <T> ActionListener<T> delegateResponse(ActionListener<T> delegate, BiConsumer<ActionListener<T>, Exception> bc) {
+        return new ActionListener<T>() {
+
+            @Override
+            public void onResponse(T r) {
+                delegate.onResponse(r);
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                bc.accept(delegate, e);
+            }
+        };
+    }
+
+    /**
+     * Creates a listener that delegates all exceptions it receives to another listener.
+     *
+     * @param delegate ActionListener to wrap and delegate any exception to
+     * @param bc BiConsumer invoked with delegate listener and response
+     * @param <T> Type of the delegating listener's response
+     * @param <R> Type of the wrapped listeners
+     * @return Delegating listener
+     */
+    static <T, R> ActionListener<T> delegateFailure(ActionListener<R> delegate, BiConsumer<ActionListener<R>, T> bc) {
+        return new ActionListener<T>() {
+
+            @Override
+            public void onResponse(T r) {
+                bc.accept(delegate, r);
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                delegate.onFailure(e);
+            }
+        };
+    }
+
+    /**
      * Creates a listener that listens for a response (or failure) and executes the
      * corresponding runnable when the response (or failure) is received.
      *
@@ -83,6 +133,20 @@ public interface ActionListener<Response> {
     }
 
     /**
+     * Creates a listener that wraps another listener, mapping response values via the given mapping function and passing along
+     * exceptions to the delegate.
+     *
+     * @param listener Listener to delegate to
+     * @param fn Function to apply to listener response
+     * @param <Response> Response type of the new listener
+     * @param <T> Response type of the wrapped listener
+     * @return a listener that maps the received response and then passes it to its delegate listener
+     */
+    static <T, Response> ActionListener<Response> map(ActionListener<T> listener, CheckedFunction<Response, T, Exception> fn) {
+        return wrap(r -> listener.onResponse(fn.apply(r)), listener::onFailure);
+    }
+
+    /**
      * Converts a listener to a {@link BiConsumer} for compatibility with the {@link java.util.concurrent.CompletableFuture}
      * api.
      *
@@ -90,18 +154,12 @@ public interface ActionListener<Response> {
      * @param <Response> the type of the response
      * @return a bi consumer that will complete the wrapped listener
      */
-    static <Response> BiConsumer<Response, Throwable> toBiConsumer(ActionListener<Response> listener) {
+    static <Response> BiConsumer<Response, Exception> toBiConsumer(ActionListener<Response> listener) {
         return (response, throwable) -> {
             if (throwable == null) {
                 listener.onResponse(response);
             } else {
-                if (throwable instanceof Exception) {
-                    listener.onFailure((Exception) throwable);
-                } else if (throwable instanceof Error) {
-                    throw (Error) throwable;
-                } else {
-                    throw new AssertionError("Should have been either Error or Exception", throwable);
-                }
+                listener.onFailure(throwable);
             }
         };
     }
@@ -141,5 +199,92 @@ public interface ActionListener<Response> {
             }
         }
         ExceptionsHelper.maybeThrowRuntimeAndSuppress(exceptionList);
+    }
+
+    /**
+     * Wraps a given listener and returns a new listener which executes the provided {@code runAfter}
+     * callback when the listener is notified via either {@code #onResponse} or {@code #onFailure}.
+     */
+    static <Response> ActionListener<Response> runAfter(ActionListener<Response> delegate, Runnable runAfter) {
+        return new ActionListener<Response>() {
+            @Override
+            public void onResponse(Response response) {
+                try {
+                    delegate.onResponse(response);
+                } finally {
+                    runAfter.run();
+                }
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                try {
+                    delegate.onFailure(e);
+                } finally {
+                    runAfter.run();
+                }
+            }
+        };
+    }
+
+    /**
+     * Wraps a given listener and returns a new listener which executes the provided {@code runBefore}
+     * callback before the listener is notified via either {@code #onResponse} or {@code #onFailure}.
+     * If the callback throws an exception then it will be passed to the listener's {@code #onFailure} and its {@code #onResponse} will
+     * not be executed.
+     */
+    static <Response> ActionListener<Response> runBefore(ActionListener<Response> delegate, CheckedRunnable<?> runBefore) {
+        return new ActionListener<>() {
+            @Override
+            public void onResponse(Response response) {
+                try {
+                    runBefore.run();
+                } catch (Exception ex) {
+                    delegate.onFailure(ex);
+                    return;
+                }
+                delegate.onResponse(response);
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                try {
+                    runBefore.run();
+                } catch (Exception ex) {
+                    e.addSuppressed(ex);
+                }
+                delegate.onFailure(e);
+            }
+        };
+    }
+
+    /**
+     * Wraps a given listener and returns a new listener which makes sure {@link #onResponse(Object)}
+     * and {@link #onFailure(Exception)} of the provided listener will be called at most once.
+     */
+    static <Response> ActionListener<Response> notifyOnce(ActionListener<Response> delegate) {
+        return new NotifyOnceListener<Response>() {
+            @Override
+            protected void innerOnResponse(Response response) {
+                delegate.onResponse(response);
+            }
+
+            @Override
+            protected void innerOnFailure(Exception e) {
+                delegate.onFailure(e);
+            }
+        };
+    }
+
+    /**
+     * Completes the given listener with the result from the provided supplier accordingly.
+     * This method is mainly used to complete a listener with a block of synchronous code.
+     */
+    static <Response> void completeWith(ActionListener<Response> listener, CheckedSupplier<Response, ? extends Exception> supplier) {
+        try {
+            listener.onResponse(supplier.get());
+        } catch (Exception e) {
+            listener.onFailure(e);
+        }
     }
 }

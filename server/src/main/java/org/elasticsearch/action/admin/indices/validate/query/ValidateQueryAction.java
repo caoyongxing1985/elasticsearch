@@ -19,25 +19,14 @@
 
 package org.elasticsearch.action.admin.indices.validate.query;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class ValidateQueryAction extends Action<ValidateQueryRequest, ValidateQueryResponse, ValidateQueryRequestBuilder> {
+public class ValidateQueryAction extends ActionType<ValidateQueryResponse> {
 
     public static final ValidateQueryAction INSTANCE = new ValidateQueryAction();
     public static final String NAME = "indices:admin/validate/query";
 
     private ValidateQueryAction() {
-        super(NAME);
-    }
-
-    @Override
-    public ValidateQueryResponse newResponse() {
-        return new ValidateQueryResponse();
-    }
-
-    @Override
-    public ValidateQueryRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new ValidateQueryRequestBuilder(client, this);
+        super(NAME, ValidateQueryResponse::new);
     }
 }

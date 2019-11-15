@@ -21,7 +21,7 @@ package org.elasticsearch.index.query;
 
 import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.Query;
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.Version;
 import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.ParsingException;
 import org.elasticsearch.common.Strings;
@@ -33,12 +33,10 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.mapper.IdFieldMapper;
 import org.elasticsearch.index.mapper.MappedFieldType;
-import org.elasticsearch.index.mapper.Uid;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Objects;
@@ -50,14 +48,11 @@ import static org.elasticsearch.common.xcontent.ObjectParser.fromList;
  * A query that will return only documents matching specific ids (and a type).
  */
 public class IdsQueryBuilder extends AbstractQueryBuilder<IdsQueryBuilder> {
-    public static final String NAME = "ids";
 
-    private static final ParseField TYPE_FIELD = new ParseField("type");
+    public static final String NAME = "ids";
     private static final ParseField VALUES_FIELD = new ParseField("values");
 
     private final Set<String> ids = new HashSet<>();
-
-    private String[] types = Strings.EMPTY_ARRAY;
 
     /**
      * Creates a new IdsQueryBuilder with no types specified upfront
@@ -71,33 +66,23 @@ public class IdsQueryBuilder extends AbstractQueryBuilder<IdsQueryBuilder> {
      */
     public IdsQueryBuilder(StreamInput in) throws IOException {
         super(in);
-        types = in.readStringArray();
+        if (in.getVersion().before(Version.V_8_0_0)) {
+            // types no longer relevant so ignore
+            String[] types = in.readStringArray();
+            if (types.length > 0) {
+                throw new IllegalStateException("types are no longer supported in ids query but found [" + Arrays.toString(types) + "]");
+            }
+        }
         Collections.addAll(ids, in.readStringArray());
     }
 
     @Override
     protected void doWriteTo(StreamOutput out) throws IOException {
-        out.writeStringArray(types);
-        out.writeStringArray(ids.toArray(new String[ids.size()]));
-    }
-
-    /**
-     * Add types to query
-     */
-    // TODO: Remove
-    public IdsQueryBuilder types(String... types) {
-        if (types == null) {
-            throw new IllegalArgumentException("[" + NAME + "] types cannot be null");
+        if (out.getVersion().before(Version.V_8_0_0)) {
+            // types not supported so send an empty array to previous versions
+            out.writeStringArray(Strings.EMPTY_ARRAY);
         }
-        this.types = types;
-        return this;
-    }
-
-    /**
-     * Returns the types used in this query
-     */
-    public String[] types() {
-        return this.types;
+        out.writeStringArray(ids.toArray(new String[ids.size()]));
     }
 
     /**
@@ -121,7 +106,6 @@ public class IdsQueryBuilder extends AbstractQueryBuilder<IdsQueryBuilder> {
     @Override
     protected void doXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(NAME);
-        builder.array(TYPE_FIELD.getPreferredName(), types);
         builder.startArray(VALUES_FIELD.getPreferredName());
         for (String value : ids) {
             builder.value(value);
@@ -135,7 +119,6 @@ public class IdsQueryBuilder extends AbstractQueryBuilder<IdsQueryBuilder> {
             () -> new IdsQueryBuilder());
 
     static {
-        PARSER.declareStringArray(fromList(String.class, IdsQueryBuilder::types), IdsQueryBuilder.TYPE_FIELD);
         PARSER.declareStringArray(fromList(String.class, IdsQueryBuilder::addIds), IdsQueryBuilder.VALUES_FIELD);
         declareStandardFields(PARSER);
     }
@@ -163,35 +146,17 @@ public class IdsQueryBuilder extends AbstractQueryBuilder<IdsQueryBuilder> {
         if (this.ids.isEmpty()) {
              return Queries.newMatchNoDocsQuery("Missing ids in \"" + this.getName() + "\" query.");
         } else {
-            Collection<String> typesForQuery;
-            if (types.length == 0) {
-                typesForQuery = context.queryTypes();
-            } else if (types.length == 1 && MetaData.ALL.equals(types[0])) {
-                typesForQuery = context.getMapperService().types();
-            } else {
-                typesForQuery = new HashSet<>();
-                Collections.addAll(typesForQuery, types);
-            }
-
-            final Collection<String> mappingTypes = context.getMapperService().types();
-            assert mappingTypes.size() == 1;
-            if (typesForQuery.contains(mappingTypes.iterator().next())) {
-                return idField.termsQuery(new ArrayList<>(ids), context);
-            } else {
-                return new MatchNoDocsQuery("Type mismatch");
-            }
-            
+            return idField.termsQuery(new ArrayList<>(ids), context);
         }
     }
 
     @Override
     protected int doHashCode() {
-        return Objects.hash(ids, Arrays.hashCode(types));
+        return Objects.hash(ids);
     }
 
     @Override
     protected boolean doEquals(IdsQueryBuilder other) {
-        return Objects.equals(ids, other.ids) &&
-               Arrays.equals(types, other.types);
+        return Objects.equals(ids, other.ids);
     }
 }

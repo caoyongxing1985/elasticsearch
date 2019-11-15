@@ -80,17 +80,12 @@ public class StringTerms extends InternalMappedTerms<StringTerms, StringTerms.Bu
 
         @Override
         public String getKeyAsString() {
-            return format.format(termBytes);
+            return format.format(termBytes).toString();
         }
 
         @Override
         public int compareKey(Bucket other) {
             return termBytes.compareTo(other.termBytes);
-        }
-
-        @Override
-        Bucket newBucket(long docCount, InternalAggregations aggs, long docCountError) {
-            return new Bucket(termBytes, docCount, aggs, showDocCountError, docCountError, format);
         }
 
         @Override
@@ -138,6 +133,11 @@ public class StringTerms extends InternalMappedTerms<StringTerms, StringTerms.Bu
     public Bucket createBucket(InternalAggregations aggregations, Bucket prototype) {
         return new Bucket(prototype.termBytes, prototype.docCount, aggregations, prototype.showDocCountError, prototype.docCountError,
                 prototype.format);
+    }
+
+    @Override
+    Bucket createBucket(long docCount, InternalAggregations aggs, long docCountError, StringTerms.Bucket prototype) {
+        return new Bucket(prototype.termBytes, docCount, aggs, prototype.showDocCountError, docCountError, format);
     }
 
     @Override

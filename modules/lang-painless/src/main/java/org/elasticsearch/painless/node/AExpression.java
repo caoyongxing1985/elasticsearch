@@ -20,10 +20,11 @@
 package org.elasticsearch.painless.node;
 
 import org.elasticsearch.painless.AnalyzerCaster;
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Cast;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
+import org.elasticsearch.painless.ScriptRoot;
+import org.elasticsearch.painless.lookup.PainlessCast;
+import org.elasticsearch.painless.lookup.PainlessLookupUtility;
 
 import java.util.Objects;
 
@@ -117,8 +118,8 @@ public abstract class AExpression extends ANode {
      * nodes with the constant variable set to a non-null value with {@link EConstant}.
      * @return The new child node for the parent node calling this method.
      */
-    AExpression cast(Locals locals) {
-        Cast cast = AnalyzerCaster.getLegalCast(location, actual, expected, explicit, internal);
+    AExpression cast(ScriptRoot scriptRoot, Locals locals) {
+        PainlessCast cast = AnalyzerCaster.getLegalCast(location, actual, expected, explicit, internal);
 
         if (cast == null) {
             if (constant == null || this instanceof EConstant) {
@@ -135,7 +136,7 @@ public abstract class AExpression extends ANode {
                 // will already be the same.
 
                 EConstant econstant = new EConstant(location, constant);
-                econstant.analyze(locals);
+                econstant.analyze(scriptRoot, locals);
 
                 if (!expected.equals(econstant.actual)) {
                     throw createError(new IllegalStateException("Illegal tree structure."));
@@ -157,7 +158,7 @@ public abstract class AExpression extends ANode {
 
                 return ecast;
             } else {
-                if (Definition.isConstantType(expected)) {
+                if (PainlessLookupUtility.isConstantType(expected)) {
                     // For the case where a cast is required, a constant is set,
                     // and the constant can be immediately cast to the expected type.
                     // An EConstant replaces this node with the constant cast appropriately
@@ -169,7 +170,7 @@ public abstract class AExpression extends ANode {
                     constant = AnalyzerCaster.constCast(location, constant, cast);
 
                     EConstant econstant = new EConstant(location, constant);
-                    econstant.analyze(locals);
+                    econstant.analyze(scriptRoot, locals);
 
                     if (!expected.equals(econstant.actual)) {
                         throw createError(new IllegalStateException("Illegal tree structure."));
@@ -200,7 +201,7 @@ public abstract class AExpression extends ANode {
                     // the EConstant will already be the same.
 
                     EConstant econstant = new EConstant(location, constant);
-                    econstant.analyze(locals);
+                    econstant.analyze(scriptRoot, locals);
 
                     if (!actual.equals(econstant.actual)) {
                         throw createError(new IllegalStateException("Illegal tree structure."));

@@ -22,8 +22,6 @@ package org.elasticsearch.index.query;
 import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.Query;
 import org.elasticsearch.common.ParsingException;
-import org.elasticsearch.common.xcontent.XContent;
-import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.test.AbstractQueryTestCase;
 
 import java.io.IOException;
@@ -42,8 +40,8 @@ public class ConstantScoreQueryBuilderTests extends AbstractQueryTestCase<Consta
     }
 
     @Override
-    protected void doAssertLuceneQuery(ConstantScoreQueryBuilder queryBuilder, Query query, SearchContext context) throws IOException {
-        Query innerQuery = queryBuilder.innerQuery().toQuery(context.getQueryShardContext());
+    protected void doAssertLuceneQuery(ConstantScoreQueryBuilder queryBuilder, Query query, QueryShardContext context) throws IOException {
+        Query innerQuery = queryBuilder.innerQuery().toQuery(context);
         if (innerQuery == null) {
             assertThat(query, nullValue());
         } else {
@@ -60,20 +58,6 @@ public class ConstantScoreQueryBuilderTests extends AbstractQueryTestCase<Consta
         String queryString = "{ \"" + ConstantScoreQueryBuilder.NAME + "\" : {} }";
         ParsingException e = expectThrows(ParsingException.class, () -> parseQuery(queryString));
         assertThat(e.getMessage(), containsString("requires a 'filter' element"));
-    }
-
-    /**
-     * test that multiple "filter" elements causes {@link ParsingException}
-     */
-    public void testMultipleFilterElements() throws IOException {
-        assumeFalse("Test only makes sense if XContent parser doesn't have strict duplicate checks enabled",
-            XContent.isStrictDuplicateDetectionEnabled());
-        String queryString = "{ \"" + ConstantScoreQueryBuilder.NAME + "\" : {\n" +
-                                    "\"filter\" : { \"term\": { \"foo\": \"a\" } },\n" +
-                                    "\"filter\" : { \"term\": { \"foo\": \"x\" } },\n" +
-                            "} }";
-        ParsingException e = expectThrows(ParsingException.class, () -> parseQuery(queryString));
-        assertThat(e.getMessage(), containsString("accepts only one 'filter' element"));
     }
 
     /**

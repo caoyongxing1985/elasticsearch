@@ -56,6 +56,14 @@ public class UpdateSettingsRequest extends AcknowledgedRequest<UpdateSettingsReq
     private Settings settings = EMPTY_SETTINGS;
     private boolean preserveExisting = false;
 
+    public UpdateSettingsRequest(StreamInput in) throws IOException {
+        super(in);
+        indices = in.readStringArray();
+        indicesOptions = IndicesOptions.readIndicesOptions(in);
+        settings = readSettingsFromStream(in);
+        preserveExisting = in.readBoolean();
+    }
+
     public UpdateSettingsRequest() {
     }
 
@@ -88,7 +96,7 @@ public class UpdateSettingsRequest extends AcknowledgedRequest<UpdateSettingsReq
         return indices;
     }
 
-    Settings settings() {
+    public Settings settings() {
         return settings;
     }
 
@@ -155,8 +163,7 @@ public class UpdateSettingsRequest extends AcknowledgedRequest<UpdateSettingsReq
     /**
      * Sets the settings to be updated (either json or yaml format)
      */
-    @SuppressWarnings("unchecked")
-    public UpdateSettingsRequest settings(Map source) {
+    public UpdateSettingsRequest settings(Map<String, ?> source) {
         try {
             XContentBuilder builder = XContentFactory.contentBuilder(XContentType.JSON);
             builder.map(source);
@@ -165,15 +172,6 @@ public class UpdateSettingsRequest extends AcknowledgedRequest<UpdateSettingsReq
             throw new ElasticsearchGenerationException("Failed to generate [" + source + "]", e);
         }
         return this;
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        indices = in.readStringArray();
-        indicesOptions = IndicesOptions.readIndicesOptions(in);
-        settings = readSettingsFromStream(in);
-        preserveExisting = in.readBoolean();
     }
 
     @Override

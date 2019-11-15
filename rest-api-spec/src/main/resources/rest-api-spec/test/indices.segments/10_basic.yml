@@ -25,7 +25,6 @@
   - do:
       index:
         index: index1
-        type: type
         body: { foo: bar }
         refresh: true
 
@@ -43,10 +42,6 @@
 
 ---
 "closed segments test":
-  - skip:
-      version: " - 5.99.99"
-      reason:  status code  on closed indices changed in 6.0.0 from 403 to 400
-
   - do:
       indices.create:
         index: index1
@@ -57,7 +52,6 @@
   - do:
       index:
         index: index1
-        type: type
         body: { foo: bar }
         refresh: true
 

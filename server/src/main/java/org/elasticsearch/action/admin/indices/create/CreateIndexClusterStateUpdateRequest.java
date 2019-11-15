@@ -27,7 +27,6 @@ import org.elasticsearch.cluster.block.ClusterBlock;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.Index;
-import org.elasticsearch.transport.TransportMessage;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -39,14 +38,12 @@ import java.util.Set;
  */
 public class CreateIndexClusterStateUpdateRequest extends ClusterStateUpdateRequest<CreateIndexClusterStateUpdateRequest> {
 
-    private final TransportMessage originalMessage;
     private final String cause;
     private final String index;
     private final String providedName;
     private Index recoverFrom;
     private ResizeType resizeType;
-
-    private IndexMetaData.State state = IndexMetaData.State.OPEN;
+    private boolean copySettings;
 
     private Settings settings = Settings.Builder.EMPTY_SETTINGS;
 
@@ -54,14 +51,11 @@ public class CreateIndexClusterStateUpdateRequest extends ClusterStateUpdateRequ
 
     private final Set<Alias> aliases = new HashSet<>();
 
-    private final Map<String, IndexMetaData.Custom> customs = new HashMap<>();
-
     private final Set<ClusterBlock> blocks = new HashSet<>();
 
     private ActiveShardCount waitForActiveShards = ActiveShardCount.DEFAULT;
 
-    public CreateIndexClusterStateUpdateRequest(TransportMessage originalMessage, String cause, String index, String providedName) {
-        this.originalMessage = originalMessage;
+    public CreateIndexClusterStateUpdateRequest(String cause, String index, String providedName) {
         this.cause = cause;
         this.index = index;
         this.providedName = providedName;
@@ -82,21 +76,6 @@ public class CreateIndexClusterStateUpdateRequest extends ClusterStateUpdateRequ
         return this;
     }
 
-    public CreateIndexClusterStateUpdateRequest customs(Map<String, IndexMetaData.Custom> customs) {
-        this.customs.putAll(customs);
-        return this;
-    }
-
-    public CreateIndexClusterStateUpdateRequest blocks(Set<ClusterBlock> blocks) {
-        this.blocks.addAll(blocks);
-        return this;
-    }
-
-    public CreateIndexClusterStateUpdateRequest state(IndexMetaData.State state) {
-        this.state = state;
-        return this;
-    }
-
     public CreateIndexClusterStateUpdateRequest recoverFrom(Index recoverFrom) {
         this.recoverFrom = recoverFrom;
         return this;
@@ -112,8 +91,9 @@ public class CreateIndexClusterStateUpdateRequest extends ClusterStateUpdateRequ
         return this;
     }
 
-    public TransportMessage originalMessage() {
-        return originalMessage;
+    public CreateIndexClusterStateUpdateRequest copySettings(final boolean copySettings) {
+        this.copySettings = copySettings;
+        return this;
     }
 
     public String cause() {
@@ -122,10 +102,6 @@ public class CreateIndexClusterStateUpdateRequest extends ClusterStateUpdateRequ
 
     public String index() {
         return index;
-    }
-
-    public IndexMetaData.State state() {
-        return state;
     }
 
     public Settings settings() {
@@ -138,10 +114,6 @@ public class CreateIndexClusterStateUpdateRequest extends ClusterStateUpdateRequ
 
     public Set<Alias> aliases() {
         return aliases;
-    }
-
-    public Map<String, IndexMetaData.Custom> customs() {
-        return customs;
     }
 
     public Set<ClusterBlock> blocks() {
@@ -169,5 +141,25 @@ public class CreateIndexClusterStateUpdateRequest extends ClusterStateUpdateRequ
      */
     public ResizeType resizeType() {
         return resizeType;
+    }
+
+    public boolean copySettings() {
+        return copySettings;
+    }
+
+    @Override
+    public String toString() {
+        return "CreateIndexClusterStateUpdateRequest{" +
+            "cause='" + cause + '\'' +
+            ", index='" + index + '\'' +
+            ", providedName='" + providedName + '\'' +
+            ", recoverFrom=" + recoverFrom +
+            ", resizeType=" + resizeType +
+            ", copySettings=" + copySettings +
+            ", settings=" + settings +
+            ", aliases=" + aliases +
+            ", blocks=" + blocks +
+            ", waitForActiveShards=" + waitForActiveShards +
+            '}';
     }
 }

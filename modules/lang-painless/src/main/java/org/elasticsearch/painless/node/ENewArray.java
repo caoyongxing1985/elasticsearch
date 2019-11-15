@@ -19,11 +19,13 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
+import org.elasticsearch.painless.ClassWriter;
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
+import org.elasticsearch.painless.ScriptRoot;
 
 import java.util.List;
 import java.util.Objects;
@@ -38,14 +40,19 @@ public final class ENewArray extends AExpression {
     private final List<AExpression> arguments;
     private final boolean initialize;
 
-    private Class<?> array;
-
     public ENewArray(Location location, String type, List<AExpression> arguments, boolean initialize) {
         super(location);
 
         this.type = Objects.requireNonNull(type);
         this.arguments = Objects.requireNonNull(arguments);
         this.initialize = initialize;
+    }
+
+    @Override
+    void storeSettings(CompilerSettings settings) {
+        for (AExpression argument : arguments) {
+            argument.storeSettings(settings);
+        }
     }
 
     @Override
@@ -56,58 +63,54 @@ public final class ENewArray extends AExpression {
     }
 
     @Override
-    void analyze(Locals locals) {
-         if (!read) {
-            throw createError(new IllegalArgumentException("A newly created array must be read from."));
+    void analyze(ScriptRoot scriptRoot, Locals locals) {
+        if (!read) {
+             throw createError(new IllegalArgumentException("A newly created array must be read from."));
         }
 
-        Class<?> clazz;
+        Class<?> clazz = scriptRoot.getPainlessLookup().canonicalTypeNameToType(this.type);
 
-        try {
-            clazz = Definition.TypeToClass(locals.getDefinition().getType(this.type));
-        } catch (IllegalArgumentException exception) {
+        if (clazz == null) {
             throw createError(new IllegalArgumentException("Not a type [" + this.type + "]."));
         }
 
         for (int argument = 0; argument < arguments.size(); ++argument) {
             AExpression expression = arguments.get(argument);
 
-            expression.expected = initialize ? clazz : int.class;
+            expression.expected = initialize ? clazz.getComponentType() : int.class;
             expression.internal = true;
-            expression.analyze(locals);
-            arguments.set(argument, expression.cast(locals));
+            expression.analyze(scriptRoot, locals);
+            arguments.set(argument, expression.cast(scriptRoot, locals));
         }
 
-        actual = Definition.TypeToClass(locals.getDefinition().getType(
-            locals.getDefinition().ClassToType(clazz).struct, initialize ? 1 : arguments.size()));
-        array = Definition.defClassToObjectClass(actual);
+        actual = clazz;
     }
 
     @Override
-    void write(MethodWriter writer, Globals globals) {
-        writer.writeDebugInfo(location);
+    void write(ClassWriter classWriter, MethodWriter methodWriter, Globals globals) {
+        methodWriter.writeDebugInfo(location);
 
         if (initialize) {
-            writer.push(arguments.size());
-            writer.newArray(MethodWriter.getType(array.getComponentType()));
+            methodWriter.push(arguments.size());
+            methodWriter.newArray(MethodWriter.getType(actual.getComponentType()));
 
             for (int index = 0; index < arguments.size(); ++index) {
                 AExpression argument = arguments.get(index);
 
-                writer.dup();
-                writer.push(index);
-                argument.write(writer, globals);
-                writer.arrayStore(MethodWriter.getType(array.getComponentType()));
+                methodWriter.dup();
+                methodWriter.push(index);
+                argument.write(classWriter, methodWriter, globals);
+                methodWriter.arrayStore(MethodWriter.getType(actual.getComponentType()));
             }
         } else {
             for (AExpression argument : arguments) {
-                argument.write(writer, globals);
+                argument.write(classWriter, methodWriter, globals);
             }
 
             if (arguments.size() > 1) {
-                writer.visitMultiANewArrayInsn(MethodWriter.getType(array).getDescriptor(), arguments.size());
+                methodWriter.visitMultiANewArrayInsn(MethodWriter.getType(actual).getDescriptor(), arguments.size());
             } else {
-                writer.newArray(MethodWriter.getType(array.getComponentType()));
+                methodWriter.newArray(MethodWriter.getType(actual.getComponentType()));
             }
         }
     }

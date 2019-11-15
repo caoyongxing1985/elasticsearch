@@ -22,8 +22,10 @@ package org.elasticsearch.action.admin.cluster.state;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.action.support.master.MasterNodeReadOperationRequestBuilder;
 import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.common.unit.TimeValue;
 
-public class ClusterStateRequestBuilder extends MasterNodeReadOperationRequestBuilder<ClusterStateRequest, ClusterStateResponse, ClusterStateRequestBuilder> {
+public class ClusterStateRequestBuilder extends MasterNodeReadOperationRequestBuilder<ClusterStateRequest,
+        ClusterStateResponse, ClusterStateRequestBuilder> {
 
     public ClusterStateRequestBuilder(ElasticsearchClient client, ClusterStateAction action) {
         super(client, action, new ClusterStateRequest());
@@ -52,7 +54,7 @@ public class ClusterStateRequestBuilder extends MasterNodeReadOperationRequestBu
 
     /**
      * Should the cluster state result include the {@link org.elasticsearch.cluster.metadata.MetaData}. Defaults
-     * to <tt>true</tt>.
+     * to {@code true}.
      */
     public ClusterStateRequestBuilder setMetaData(boolean filter) {
         request.metaData(filter);
@@ -61,7 +63,7 @@ public class ClusterStateRequestBuilder extends MasterNodeReadOperationRequestBu
 
     /**
      * Should the cluster state result include the {@link org.elasticsearch.cluster.node.DiscoveryNodes}. Defaults
-     * to <tt>true</tt>.
+     * to {@code true}.
      */
     public ClusterStateRequestBuilder setNodes(boolean filter) {
         request.nodes(filter);
@@ -70,7 +72,7 @@ public class ClusterStateRequestBuilder extends MasterNodeReadOperationRequestBu
 
     /**
      * Should the cluster state result include the {@link org.elasticsearch.cluster.ClusterState.Custom}. Defaults
-     * to <tt>true</tt>.
+     * to {@code true}.
      */
     public ClusterStateRequestBuilder setCustoms(boolean filter) {
         request.customs(filter);
@@ -79,7 +81,7 @@ public class ClusterStateRequestBuilder extends MasterNodeReadOperationRequestBu
 
     /**
      * Should the cluster state result include the {@link org.elasticsearch.cluster.routing.RoutingTable}. Defaults
-     * to <tt>true</tt>.
+     * to {@code true}.
      */
     public ClusterStateRequestBuilder setRoutingTable(boolean filter) {
         request.routingTable(filter);
@@ -97,6 +99,23 @@ public class ClusterStateRequestBuilder extends MasterNodeReadOperationRequestBu
 
     public ClusterStateRequestBuilder setIndicesOptions(IndicesOptions indicesOptions) {
         request.indicesOptions(indicesOptions);
+        return this;
+    }
+
+    /**
+     * Causes the request to wait for the metadata version to advance to at least the given version.
+     * @param waitForMetaDataVersion The metadata version for which to wait
+     */
+    public ClusterStateRequestBuilder setWaitForMetaDataVersion(long waitForMetaDataVersion) {
+        request.waitForMetaDataVersion(waitForMetaDataVersion);
+        return this;
+    }
+
+    /**
+     * If {@link ClusterStateRequest#waitForMetaDataVersion()} is set then this determines how long to wait
+     */
+    public ClusterStateRequestBuilder setWaitForTimeOut(TimeValue waitForTimeout) {
+        request.waitForTimeout(waitForTimeout);
         return this;
     }
 }

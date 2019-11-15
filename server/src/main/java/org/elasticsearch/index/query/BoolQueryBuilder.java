@@ -24,7 +24,6 @@ import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
-import org.elasticsearch.Version;
 import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.ParsingException;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -41,7 +40,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
 
 import static org.elasticsearch.common.lucene.search.Queries.fixNegativeQueryIfNeeded;
 
@@ -91,9 +89,6 @@ public class BoolQueryBuilder extends AbstractQueryBuilder<BoolQueryBuilder> {
         shouldClauses.addAll(readQueries(in));
         filterClauses.addAll(readQueries(in));
         adjustPureNegative = in.readBoolean();
-        if (in.getVersion().before(Version.V_6_0_0_alpha1)) {
-            in.readBoolean(); // disable_coord
-        }
         minimumShouldMatch = in.readOptionalString();
     }
 
@@ -104,15 +99,12 @@ public class BoolQueryBuilder extends AbstractQueryBuilder<BoolQueryBuilder> {
         writeQueries(out, shouldClauses);
         writeQueries(out, filterClauses);
         out.writeBoolean(adjustPureNegative);
-        if (out.getVersion().before(Version.V_6_0_0_alpha1)) {
-            out.writeBoolean(true); // disable_coord
-        }
         out.writeOptionalString(minimumShouldMatch);
     }
 
     /**
      * Adds a query that <b>must</b> appear in the matching documents and will
-     * contribute to scoring. No <tt>null</tt> value allowed.
+     * contribute to scoring. No {@code null} value allowed.
      */
     public BoolQueryBuilder must(QueryBuilder queryBuilder) {
         if (queryBuilder == null) {
@@ -131,7 +123,7 @@ public class BoolQueryBuilder extends AbstractQueryBuilder<BoolQueryBuilder> {
 
     /**
      * Adds a query that <b>must</b> appear in the matching documents but will
-     * not contribute to scoring. No <tt>null</tt> value allowed.
+     * not contribute to scoring. No {@code null} value allowed.
      */
     public BoolQueryBuilder filter(QueryBuilder queryBuilder) {
         if (queryBuilder == null) {
@@ -150,7 +142,7 @@ public class BoolQueryBuilder extends AbstractQueryBuilder<BoolQueryBuilder> {
 
     /**
      * Adds a query that <b>must not</b> appear in the matching documents.
-     * No <tt>null</tt> value allowed.
+     * No {@code null} value allowed.
      */
     public BoolQueryBuilder mustNot(QueryBuilder queryBuilder) {
         if (queryBuilder == null) {
@@ -169,8 +161,8 @@ public class BoolQueryBuilder extends AbstractQueryBuilder<BoolQueryBuilder> {
 
     /**
      * Adds a clause that <i>should</i> be matched by the returned documents. For a boolean query with no
-     * <tt>MUST</tt> clauses one or more <code>SHOULD</code> clauses must match a document
-     * for the BooleanQuery to match. No <tt>null</tt> value allowed.
+     * {@code MUST} clauses one or more <code>SHOULD</code> clauses must match a document
+     * for the BooleanQuery to match. No {@code null} value allowed.
      *
      * @see #minimumShouldMatch(int)
      */
@@ -385,12 +377,6 @@ public class BoolQueryBuilder extends AbstractQueryBuilder<BoolQueryBuilder> {
             return new MatchAllDocsQuery();
         }
 
-        final String minimumShouldMatch;
-        if (context.isFilter() && this.minimumShouldMatch == null && shouldClauses.size() > 0) {
-            minimumShouldMatch = "1";
-        } else {
-            minimumShouldMatch = this.minimumShouldMatch;
-        }
         Query query = Queries.applyMinimumShouldMatch(booleanQuery, minimumShouldMatch);
         return adjustPureNegative ? fixNegativeQueryIfNeeded(query) : query;
     }
@@ -398,17 +384,7 @@ public class BoolQueryBuilder extends AbstractQueryBuilder<BoolQueryBuilder> {
     private static void addBooleanClauses(QueryShardContext context, BooleanQuery.Builder booleanQueryBuilder,
                                           List<QueryBuilder> clauses, Occur occurs) throws IOException {
         for (QueryBuilder query : clauses) {
-            Query luceneQuery = null;
-            switch (occurs) {
-                case MUST:
-                case SHOULD:
-                    luceneQuery = query.toQuery(context);
-                    break;
-                case FILTER:
-                case MUST_NOT:
-                    luceneQuery = query.toFilter(context);
-                    break;
-            }
+            Query luceneQuery = query.toQuery(context);
             booleanQueryBuilder.add(new BooleanClause(luceneQuery, occurs));
         }
     }

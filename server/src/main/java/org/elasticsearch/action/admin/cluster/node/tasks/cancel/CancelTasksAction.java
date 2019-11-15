@@ -19,28 +19,18 @@
 
 package org.elasticsearch.action.admin.cluster.node.tasks.cancel;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
 /**
- * Action for cancelling running tasks
+ * ActionType for cancelling running tasks
  */
-public class CancelTasksAction extends Action<CancelTasksRequest, CancelTasksResponse, CancelTasksRequestBuilder> {
+public class CancelTasksAction extends ActionType<CancelTasksResponse> {
 
     public static final CancelTasksAction INSTANCE = new CancelTasksAction();
     public static final String NAME = "cluster:admin/tasks/cancel";
 
     private CancelTasksAction() {
-        super(NAME);
-    }
-
-    @Override
-    public CancelTasksResponse newResponse() {
-        return new CancelTasksResponse();
-    }
-
-    @Override
-    public CancelTasksRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new CancelTasksRequestBuilder(client, this);
+        super(NAME, CancelTasksResponse::new);
     }
 }
+

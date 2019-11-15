@@ -22,12 +22,12 @@ package org.elasticsearch.action.admin.indices.mapping.get;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.HandledTransportAction;
+import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.tasks.Task;
 import org.elasticsearch.transport.TransportService;
 
 import java.util.HashMap;
@@ -35,24 +35,27 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
+import static java.util.Collections.emptyMap;
 import static java.util.Collections.unmodifiableMap;
 
 public class TransportGetFieldMappingsAction extends HandledTransportAction<GetFieldMappingsRequest, GetFieldMappingsResponse> {
 
     private final ClusterService clusterService;
-    private final TransportGetFieldMappingsIndexAction shardAction;
+    private final IndexNameExpressionResolver indexNameExpressionResolver;
+    private final NodeClient client;
 
     @Inject
-    public TransportGetFieldMappingsAction(Settings settings, TransportService transportService, ClusterService clusterService,
-                                           ThreadPool threadPool, TransportGetFieldMappingsIndexAction shardAction,
-                                           ActionFilters actionFilters, IndexNameExpressionResolver indexNameExpressionResolver) {
-        super(settings, GetFieldMappingsAction.NAME, threadPool, transportService, actionFilters, indexNameExpressionResolver, GetFieldMappingsRequest::new);
+    public TransportGetFieldMappingsAction(TransportService transportService, ClusterService clusterService,
+                                           ActionFilters actionFilters, IndexNameExpressionResolver indexNameExpressionResolver,
+                                           NodeClient client) {
+        super(GetFieldMappingsAction.NAME, transportService, actionFilters, GetFieldMappingsRequest::new);
         this.clusterService = clusterService;
-        this.shardAction = shardAction;
+        this.indexNameExpressionResolver = indexNameExpressionResolver;
+        this.client = client;
     }
 
     @Override
-    protected void doExecute(GetFieldMappingsRequest request, final ActionListener<GetFieldMappingsResponse> listener) {
+    protected void doExecute(Task task, GetFieldMappingsRequest request, final ActionListener<GetFieldMappingsResponse> listener) {
         ClusterState clusterState = clusterService.state();
         String[] concreteIndices = indexNameExpressionResolver.concreteIndexNames(clusterState, request);
         final AtomicInteger indexCounter = new AtomicInteger();
@@ -60,12 +63,13 @@ public class TransportGetFieldMappingsAction extends HandledTransportAction<GetF
         final AtomicReferenceArray<Object> indexResponses = new AtomicReferenceArray<>(concreteIndices.length);
 
         if (concreteIndices.length == 0) {
-            listener.onResponse(new GetFieldMappingsResponse());
+            listener.onResponse(new GetFieldMappingsResponse(emptyMap()));
         } else {
             boolean probablySingleFieldRequest = concreteIndices.length == 1 && request.types().length == 1 && request.fields().length == 1;
             for (final String index : concreteIndices) {
                 GetFieldMappingsIndexRequest shardRequest = new GetFieldMappingsIndexRequest(request, index, probablySingleFieldRequest);
-                shardAction.execute(shardRequest, new ActionListener<GetFieldMappingsResponse>() {
+
+                client.executeLocally(TransportGetFieldMappingsIndexAction.TYPE, shardRequest, new ActionListener<>() {
                     @Override
                     public void onResponse(GetFieldMappingsResponse result) {
                         indexResponses.set(indexCounter.getAndIncrement(), result);

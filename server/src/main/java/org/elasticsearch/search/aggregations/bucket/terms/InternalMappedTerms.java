@@ -27,7 +27,6 @@ import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
 import org.elasticsearch.search.aggregations.BucketOrder;
 
 import java.io.IOException;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -116,10 +115,13 @@ public abstract class InternalMappedTerms<A extends InternalTerms<A, B>, B exten
     }
 
     @Override
-    protected boolean doEquals(Object obj) {
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        if (super.equals(obj) == false) return false;
+
         InternalMappedTerms<?,?> that = (InternalMappedTerms<?,?>) obj;
-        return super.doEquals(obj)
-                && Objects.equals(buckets, that.buckets)
+        return Objects.equals(buckets, that.buckets)
                 && Objects.equals(format, that.format)
                 && Objects.equals(otherDocCount, that.otherDocCount)
                 && Objects.equals(showTermDocCountError, that.showTermDocCountError)
@@ -128,8 +130,8 @@ public abstract class InternalMappedTerms<A extends InternalTerms<A, B>, B exten
     }
 
     @Override
-    protected int doHashCode() {
-        return Objects.hash(super.doHashCode(), buckets, format, otherDocCount, showTermDocCountError, shardSize);
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), buckets, format, otherDocCount, showTermDocCountError, shardSize);
     }
 
     @Override

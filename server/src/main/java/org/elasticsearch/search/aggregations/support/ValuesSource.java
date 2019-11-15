@@ -26,7 +26,7 @@ import org.apache.lucene.index.OrdinalMap;
 import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.Scorer;
+import org.apache.lucene.search.Scorable;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.lucene.ScorerAware;
 import org.elasticsearch.common.util.CollectionUtils;
@@ -42,7 +42,8 @@ import org.elasticsearch.index.fielddata.SortedBinaryDocValues;
 import org.elasticsearch.index.fielddata.SortedNumericDoubleValues;
 import org.elasticsearch.index.fielddata.SortingBinaryDocValues;
 import org.elasticsearch.index.fielddata.SortingNumericDoubleValues;
-import org.elasticsearch.script.SearchScript;
+import org.elasticsearch.index.mapper.RangeType;
+import org.elasticsearch.script.AggregationScript;
 import org.elasticsearch.search.aggregations.support.ValuesSource.WithScript.BytesValues;
 import org.elasticsearch.search.aggregations.support.values.ScriptBytesValues;
 import org.elasticsearch.search.aggregations.support.values.ScriptDoubleValues;
@@ -65,6 +66,28 @@ public abstract class ValuesSource {
         return false;
     }
 
+    public static class Range extends ValuesSource {
+        private final RangeType rangeType;
+        protected final IndexFieldData<?> indexFieldData;
+
+        public Range(IndexFieldData<?> indexFieldData, RangeType rangeType) {
+            this.indexFieldData = indexFieldData;
+            this.rangeType = rangeType;
+        }
+
+        @Override
+        public SortedBinaryDocValues bytesValues(LeafReaderContext context) {
+            return indexFieldData.load(context).getBytesValues();
+        }
+
+        @Override
+        public DocValueBits docsWithValue(LeafReaderContext context) throws IOException {
+            final SortedBinaryDocValues bytes = bytesValues(context);
+            return org.elasticsearch.index.fielddata.FieldData.docsWithValue(bytes);
+        }
+
+        public RangeType rangeType() { return rangeType; }
+    }
     public abstract static class Bytes extends ValuesSource {
 
         @Override
@@ -111,6 +134,15 @@ public abstract class ValuesSource {
             public abstract SortedSetDocValues globalOrdinalsValues(LeafReaderContext context)
                     throws IOException;
 
+            /**
+             * Whether this values source is able to provide a mapping between global and segment ordinals,
+             * by returning the underlying {@link OrdinalMap}. If this method returns false, then calling
+             * {@link #globalOrdinalsMapping} will result in an {@link UnsupportedOperationException}.
+             */
+            public boolean supportsGlobalOrdinalsMapping() {
+                return true;
+            }
+
             /** Returns a mapping from segment ordinals to global ordinals. */
             public abstract LongUnaryOperator globalOrdinalsMapping(LeafReaderContext context)
                     throws IOException;
@@ -154,6 +186,11 @@ public abstract class ValuesSource {
                 }
 
                 @Override
+                public boolean supportsGlobalOrdinalsMapping() {
+                    return indexFieldData.supportsGlobalOrdinalsMapping();
+                }
+
+                @Override
                 public LongUnaryOperator globalOrdinalsMapping(LeafReaderContext context) throws IOException {
                     final IndexOrdinalsFieldData global = indexFieldData.loadGlobal((DirectoryReader)context.parent.reader());
                     final OrdinalMap map = global.getOrdinalMap();
@@ -179,13 +216,14 @@ public abstract class ValuesSource {
             public SortedBinaryDocValues bytesValues(LeafReaderContext context) {
                 return indexFieldData.load(context).getBytesValues();
             }
+
         }
 
         public static class Script extends Bytes {
 
-            private final SearchScript.LeafFactory script;
+            private final AggregationScript.LeafFactory script;
 
-            public Script(SearchScript.LeafFactory script) {
+            public Script(AggregationScript.LeafFactory script) {
                 this.script = script;
             }
 
@@ -199,8 +237,6 @@ public abstract class ValuesSource {
                 return script.needs_score();
             }
         }
-
-
     }
 
     public abstract static class Numeric extends ValuesSource {
@@ -252,9 +288,9 @@ public abstract class ValuesSource {
         public static class WithScript extends Numeric {
 
             private final Numeric delegate;
-            private final SearchScript.LeafFactory script;
+            private final AggregationScript.LeafFactory script;
 
-            public WithScript(Numeric delegate, SearchScript.LeafFactory script) {
+            public WithScript(Numeric delegate, AggregationScript.LeafFactory script) {
                 this.delegate = delegate;
                 this.script = script;
             }
@@ -287,15 +323,15 @@ public abstract class ValuesSource {
             static class LongValues extends AbstractSortingNumericDocValues implements ScorerAware {
 
                 private final SortedNumericDocValues longValues;
-                private final SearchScript script;
+                private final AggregationScript script;
 
-                LongValues(SortedNumericDocValues values, SearchScript script) {
+                LongValues(SortedNumericDocValues values, AggregationScript script) {
                     this.longValues = values;
                     this.script = script;
                 }
 
                 @Override
-                public void setScorer(Scorer scorer) {
+                public void setScorer(Scorable scorer) {
                     script.setScorer(scorer);
                 }
 
@@ -318,15 +354,15 @@ public abstract class ValuesSource {
             static class DoubleValues extends SortingNumericDoubleValues implements ScorerAware {
 
                 private final SortedNumericDoubleValues doubleValues;
-                private final SearchScript script;
+                private final AggregationScript script;
 
-                DoubleValues(SortedNumericDoubleValues values, SearchScript script) {
+                DoubleValues(SortedNumericDoubleValues values, AggregationScript script) {
                     this.doubleValues = values;
                     this.script = script;
                 }
 
                 @Override
-                public void setScorer(Scorer scorer) {
+                public void setScorer(Scorable scorer) {
                     script.setScorer(scorer);
                 }
 
@@ -377,17 +413,17 @@ public abstract class ValuesSource {
         }
 
         public static class Script extends Numeric {
-            private final SearchScript.LeafFactory script;
+            private final AggregationScript.LeafFactory script;
             private final ValueType scriptValueType;
 
-            public Script(SearchScript.LeafFactory script, ValueType scriptValueType) {
+            public Script(AggregationScript.LeafFactory script, ValueType scriptValueType) {
                 this.script = script;
                 this.scriptValueType = scriptValueType;
             }
 
             @Override
             public boolean isFloatingPoint() {
-                return scriptValueType != null ? scriptValueType.isFloatingPoint() : true;
+                return scriptValueType != null ? scriptValueType == ValueType.DOUBLE : true;
             }
 
             @Override
@@ -417,9 +453,9 @@ public abstract class ValuesSource {
     public static class WithScript extends Bytes {
 
         private final ValuesSource delegate;
-        private final SearchScript.LeafFactory script;
+        private final AggregationScript.LeafFactory script;
 
-        public WithScript(ValuesSource delegate, SearchScript.LeafFactory script) {
+        public WithScript(ValuesSource delegate, AggregationScript.LeafFactory script) {
             this.delegate = delegate;
             this.script = script;
         }
@@ -437,15 +473,15 @@ public abstract class ValuesSource {
         static class BytesValues extends SortingBinaryDocValues implements ScorerAware {
 
             private final SortedBinaryDocValues bytesValues;
-            private final SearchScript script;
+            private final AggregationScript script;
 
-            BytesValues(SortedBinaryDocValues bytesValues, SearchScript script) {
+            BytesValues(SortedBinaryDocValues bytesValues, AggregationScript script) {
                 this.bytesValues = bytesValues;
                 this.script = script;
             }
 
             @Override
-            public void setScorer(Scorer scorer) {
+            public void setScorer(Scorable scorer) {
                 script.setScorer(scorer);
             }
 
@@ -454,11 +490,12 @@ public abstract class ValuesSource {
                 if (bytesValues.advanceExact(doc)) {
                     count = bytesValues.docValueCount();
                     grow();
+                    script.setDocument(doc);
                     for (int i = 0; i < count; ++i) {
                         final BytesRef value = bytesValues.nextValue();
                         script.setNextAggregationValue(value.utf8ToString());
-                        Object run = script.run();
-                        CollectionUtils.ensureNoSelfReferences(run);
+                        Object run = script.execute();
+                        CollectionUtils.ensureNoSelfReferences(run, "ValuesSource.BytesValues script");
                         values[i].copyChars(run.toString());
                     }
                     sort();

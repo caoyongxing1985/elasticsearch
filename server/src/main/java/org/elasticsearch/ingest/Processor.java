@@ -19,12 +19,17 @@
 
 package org.elasticsearch.ingest;
 
+import org.elasticsearch.client.Client;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.index.analysis.AnalysisRegistry;
 import org.elasticsearch.script.ScriptService;
+import org.elasticsearch.threadpool.Scheduler;
 
 import java.util.Map;
+import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
+import java.util.function.LongSupplier;
 
 /**
  * A processor implementation may modify the data belonging to a document.
@@ -36,8 +41,26 @@ public interface Processor {
 
     /**
      * Introspect and potentially modify the incoming data.
+     *
+     * Expert method: only override this method if a processor implementation needs to make an asynchronous call,
+     * otherwise just overwrite {@link #execute(IngestDocument)}.
      */
-    void execute(IngestDocument ingestDocument) throws Exception;
+    default void execute(IngestDocument ingestDocument, BiConsumer<IngestDocument, Exception> handler) {
+        try {
+            IngestDocument result = execute(ingestDocument);
+            handler.accept(result, null);
+        } catch (Exception e) {
+            handler.accept(null, e);
+        }
+    }
+
+    /**
+     * Introspect and potentially modify the incoming data.
+     *
+     * @return If <code>null</code> is returned then the current document will be dropped and not be indexed,
+     *         otherwise this document will be kept and indexed
+     */
+    IngestDocument execute(IngestDocument ingestDocument) throws Exception;
 
     /**
      * Gets the type of a processor
@@ -95,12 +118,31 @@ public interface Processor {
          */
         public final ThreadContext threadContext;
 
-        public Parameters(Environment env, ScriptService scriptService,
-                          AnalysisRegistry analysisRegistry, ThreadContext threadContext) {
+        public final LongSupplier relativeTimeSupplier;
+
+        public final IngestService ingestService;
+
+        /**
+         * Provides scheduler support
+         */
+        public final BiFunction<Long, Runnable, Scheduler.ScheduledCancellable> scheduler;
+
+        /**
+         * Provides access to the node client
+         */
+        public final Client client;
+
+        public Parameters(Environment env, ScriptService scriptService, AnalysisRegistry analysisRegistry,  ThreadContext threadContext,
+                          LongSupplier relativeTimeSupplier, BiFunction<Long, Runnable, Scheduler.ScheduledCancellable> scheduler,
+                          IngestService ingestService, Client client) {
             this.env = env;
             this.scriptService = scriptService;
             this.threadContext = threadContext;
             this.analysisRegistry = analysisRegistry;
+            this.relativeTimeSupplier = relativeTimeSupplier;
+            this.scheduler = scheduler;
+            this.ingestService = ingestService;
+            this.client = client;
         }
 
     }

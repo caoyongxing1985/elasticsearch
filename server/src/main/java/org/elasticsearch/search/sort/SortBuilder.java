@@ -22,9 +22,7 @@ package org.elasticsearch.search.sort;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
-import org.apache.lucene.search.join.ScoreMode;
 import org.apache.lucene.search.join.ToChildBlockJoinQuery;
-import org.apache.lucene.search.join.ToParentBlockJoinQuery;
 import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.ParsingException;
 import org.elasticsearch.common.Strings;
@@ -42,14 +40,13 @@ import org.elasticsearch.search.DocValueFormat;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-import static java.util.Collections.unmodifiableMap;
 import static org.elasticsearch.index.query.AbstractQueryBuilder.parseInnerQueryBuilder;
+import static org.elasticsearch.search.sort.NestedSortBuilder.FILTER_FIELD;
 
 public abstract class SortBuilder<T extends SortBuilder<T>> implements NamedWriteable, ToXContentObject, Rewriteable<SortBuilder<?>> {
 
@@ -57,19 +54,13 @@ public abstract class SortBuilder<T extends SortBuilder<T>> implements NamedWrit
 
     // parse fields common to more than one SortBuilder
     public static final ParseField ORDER_FIELD = new ParseField("order");
-    public static final ParseField NESTED_FILTER_FIELD = new ParseField("nested_filter");
-    public static final ParseField NESTED_PATH_FIELD = new ParseField("nested_path");
 
-    private static final Map<String, Parser<?>> PARSERS;
-    static {
-        Map<String, Parser<?>> parsers = new HashMap<>();
-        parsers.put(ScriptSortBuilder.NAME, ScriptSortBuilder::fromXContent);
-        parsers.put(GeoDistanceSortBuilder.NAME, GeoDistanceSortBuilder::fromXContent);
-        parsers.put(GeoDistanceSortBuilder.ALTERNATIVE_NAME, GeoDistanceSortBuilder::fromXContent);
-        parsers.put(ScoreSortBuilder.NAME, ScoreSortBuilder::fromXContent);
-        // FieldSortBuilder gets involved if the user specifies a name that isn't one of these.
-        PARSERS = unmodifiableMap(parsers);
-    }
+    private static final Map<String, Parser<?>> PARSERS = Map.of(
+            ScriptSortBuilder.NAME, ScriptSortBuilder::fromXContent,
+            GeoDistanceSortBuilder.NAME, GeoDistanceSortBuilder::fromXContent,
+            GeoDistanceSortBuilder.ALTERNATIVE_NAME, GeoDistanceSortBuilder::fromXContent,
+            // TODO: this can deadlock as it might access the ScoreSortBuilder (subclass) initializer from the SortBuilder initializer!!!
+            ScoreSortBuilder.NAME, ScoreSortBuilder::fromXContent);
 
     /**
      * Create a @link {@link SortFieldAndFormat} from this builder.
@@ -179,17 +170,22 @@ public abstract class SortBuilder<T extends SortBuilder<T>> implements NamedWrit
         return Optional.empty();
     }
 
-    protected static Nested resolveNested(QueryShardContext context, String nestedPath, QueryBuilder nestedFilter) throws IOException {
-        NestedSortBuilder nestedSortBuilder = new NestedSortBuilder(nestedPath);
-        nestedSortBuilder.setFilter(nestedFilter);
-        return resolveNested(context, nestedSortBuilder);
-    }
-
     protected static Nested resolveNested(QueryShardContext context, NestedSortBuilder nestedSort) throws IOException {
-        return resolveNested(context, nestedSort, null);
+        final Query childQuery = resolveNestedQuery(context, nestedSort, null);
+        if (childQuery == null) {
+            return null;
+        }
+        final ObjectMapper objectMapper = context.nestedScope().getObjectMapper();
+        final Query parentQuery;
+        if (objectMapper == null) {
+            parentQuery = Queries.newNonNestedFilter();
+        } else {
+            parentQuery = objectMapper.nestedTypeFilter();
+        }
+        return new Nested(context.bitsetFilter(parentQuery), childQuery, nestedSort, context.searcher());
     }
 
-    private static Nested resolveNested(QueryShardContext context, NestedSortBuilder nestedSort, Nested nested) throws IOException {
+    private static Query resolveNestedQuery(QueryShardContext context, NestedSortBuilder nestedSort, Query parentQuery) throws IOException {
         if (nestedSort == null || nestedSort.getPath() == null) {
             return null;
         }
@@ -204,18 +200,10 @@ public abstract class SortBuilder<T extends SortBuilder<T>> implements NamedWrit
         if (nestedObjectMapper == null) {
             throw new QueryShardException(context, "[nested] failed to find nested object under path [" + nestedPath + "]");
         }
-        if (!nestedObjectMapper.nested().isNested()) {
+        if (nestedObjectMapper.nested().isNested() == false) {
             throw new QueryShardException(context, "[nested] nested object under path [" + nestedPath + "] is not of nested type");
         }
-
-        // get our parent query which will determines our parent documents
-        Query parentQuery;
         ObjectMapper objectMapper = context.nestedScope().getObjectMapper();
-        if (objectMapper == null) {
-            parentQuery = Queries.newNonNestedFilter(context.indexVersionCreated());
-        } else {
-            parentQuery = objectMapper.nestedTypeFilter();
-        }
 
         // get our child query, potentially applying a users filter
         Query childQuery;
@@ -223,11 +211,11 @@ public abstract class SortBuilder<T extends SortBuilder<T>> implements NamedWrit
             context.nestedScope().nextLevel(nestedObjectMapper);
             if (nestedFilter != null) {
                 assert nestedFilter == Rewriteable.rewrite(nestedFilter, context) : "nested filter is not rewritten";
-                if (nested == null) {
+                if (parentQuery == null) {
                     // this is for back-compat, original single level nested sorting never applied a nested type filter
-                    childQuery = nestedFilter.toFilter(context);
+                    childQuery = nestedFilter.toQuery(context);
                 } else {
-                    childQuery = Queries.filtered(nestedObjectMapper.nestedTypeFilter(), nestedFilter.toFilter(context));
+                    childQuery = Queries.filtered(nestedObjectMapper.nestedTypeFilter(), nestedFilter.toQuery(context));
                 }
             } else {
                 childQuery = nestedObjectMapper.nestedTypeFilter();
@@ -237,27 +225,23 @@ public abstract class SortBuilder<T extends SortBuilder<T>> implements NamedWrit
         }
 
         // apply filters from the previous nested level
-        if (nested != null) {
-            parentQuery = Queries.filtered(parentQuery,
-                new ToParentBlockJoinQuery(nested.getInnerQuery(), nested.getRootFilter(), ScoreMode.None));
-
+        if (parentQuery != null) {
             if (objectMapper != null) {
                 childQuery = Queries.filtered(childQuery,
-                    new ToChildBlockJoinQuery(nested.getInnerQuery(), context.bitsetFilter(objectMapper.nestedTypeFilter())));
+                    new ToChildBlockJoinQuery(parentQuery, context.bitsetFilter(objectMapper.nestedTypeFilter())));
             }
         }
 
         // wrap up our parent and child and either process the next level of nesting or return
-        final Nested innerNested = new Nested(context.bitsetFilter(parentQuery), childQuery);
         if (nestedNestedSort != null) {
             try {
                 context.nestedScope().nextLevel(nestedObjectMapper);
-                return resolveNested(context, nestedNestedSort, innerNested);
+                return resolveNestedQuery(context, nestedNestedSort, childQuery);
             } finally {
                 context.nestedScope().previousLevel();
             }
         } else {
-            return innerNested;
+            return childQuery;
         }
     }
 
@@ -265,7 +249,7 @@ public abstract class SortBuilder<T extends SortBuilder<T>> implements NamedWrit
         try {
             return parseInnerQueryBuilder(parser);
         } catch (Exception e) {
-            throw new ParsingException(parser.getTokenLocation(), "Expected " + NESTED_FILTER_FIELD.getPreferredName() + " element.", e);
+            throw new ParsingException(parser.getTokenLocation(), "Expected " + FILTER_FIELD.getPreferredName() + " element.", e);
         }
     }
 

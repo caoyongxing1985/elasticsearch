@@ -19,14 +19,11 @@
 
 package org.elasticsearch.index.reindex.remote;
 
+import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.Version;
-import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.index.reindex.ScrollableHitSource.BasicHit;
-import org.elasticsearch.index.reindex.ScrollableHitSource.Hit;
-import org.elasticsearch.index.reindex.ScrollableHitSource.Response;
-import org.elasticsearch.index.reindex.ScrollableHitSource.SearchFailure;
 import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.ParsingException;
+import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.util.concurrent.EsRejectedExecutionException;
 import org.elasticsearch.common.xcontent.ConstructingObjectParser;
@@ -36,6 +33,11 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentLocation;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.index.reindex.ScrollableHitSource.BasicHit;
+import org.elasticsearch.index.reindex.ScrollableHitSource.Hit;
+import org.elasticsearch.index.reindex.ScrollableHitSource.Response;
+import org.elasticsearch.index.reindex.ScrollableHitSource.SearchFailure;
+import org.elasticsearch.search.SearchHits;
 
 import java.io.IOException;
 import java.util.List;
@@ -60,14 +62,12 @@ final class RemoteResponseParsers {
             new ConstructingObjectParser<>("hit", true, a -> {
                 int i = 0;
                 String index = (String) a[i++];
-                String type = (String) a[i++];
                 String id = (String) a[i++];
                 Long version = (Long) a[i++];
-                return new BasicHit(index, type, id, version == null ? -1 : version);
+                return new BasicHit(index, id, version == null ? -1 : version);
             });
     static {
         HIT_PARSER.declareString(constructorArg(), new ParseField("_index"));
-        HIT_PARSER.declareString(constructorArg(), new ParseField("_type"));
         HIT_PARSER.declareString(constructorArg(), new ParseField("_id"));
         HIT_PARSER.declareLong(optionalConstructorArg(), new ParseField("_version"));
         HIT_PARSER.declareObject(((basicHit, tuple) -> basicHit.setSource(tuple.v1(), tuple.v2())), (p, s) -> {
@@ -108,7 +108,16 @@ final class RemoteResponseParsers {
     public static final ConstructingObjectParser<Object[], XContentType> HITS_PARSER =
             new ConstructingObjectParser<>("hits", true, a -> a);
     static {
-        HITS_PARSER.declareLong(constructorArg(), new ParseField("total"));
+        HITS_PARSER.declareField(constructorArg(), (p, c) -> {
+            if (p.currentToken() == XContentParser.Token.START_OBJECT) {
+                final TotalHits totalHits = SearchHits.parseTotalHitsFragment(p);
+                assert totalHits.relation == TotalHits.Relation.EQUAL_TO;
+                return totalHits.value;
+            } else {
+                // For BWC with nodes pre 7.0
+                return p.longValue();
+            }
+        }, new ParseField("total"), ValueType.OBJECT_OR_LONG);
         HITS_PARSER.declareObjectArray(constructorArg(), HIT_PARSER, new ParseField("hits"));
     }
 
@@ -132,7 +141,7 @@ final class RemoteResponseParsers {
                 return new SearchFailure(reasonThrowable, index, shardId, nodeId);
             });
     static {
-        SEARCH_FAILURE_PARSER.declareString(optionalConstructorArg(), new ParseField("index"));
+        SEARCH_FAILURE_PARSER.declareStringOrNull(optionalConstructorArg(), new ParseField("index"));
         SEARCH_FAILURE_PARSER.declareInt(optionalConstructorArg(), new ParseField("shard"));
         SEARCH_FAILURE_PARSER.declareString(optionalConstructorArg(), new ParseField("node"));
         SEARCH_FAILURE_PARSER.declareField(constructorArg(), (p, c) -> {
@@ -268,7 +277,11 @@ final class RemoteResponseParsers {
             "/", true, a -> (Version) a[0]);
     static {
         ConstructingObjectParser<Version, XContentType> versionParser = new ConstructingObjectParser<>(
-                "version", true, a -> Version.fromString((String) a[0]));
+                "version", true, a -> Version.fromString(
+                    ((String) a[0])
+                        .replace("-SNAPSHOT", "")
+                        .replaceFirst("-(alpha\\d+|beta\\d+|rc\\d+)", "")
+        ));
         versionParser.declareString(constructorArg(), new ParseField("number"));
         MAIN_ACTION_PARSER.declareObject(constructorArg(), versionParser, new ParseField("version"));
     }

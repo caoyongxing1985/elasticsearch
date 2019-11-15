@@ -19,42 +19,71 @@
 
 package org.elasticsearch.action.fieldcaps;
 
-import org.elasticsearch.common.io.stream.BytesStreamOutput;
-import org.elasticsearch.common.io.stream.StreamInput;
-import org.elasticsearch.test.ESTestCase;
+import org.elasticsearch.common.io.stream.Writeable;
+import org.elasticsearch.test.AbstractWireSerializingTestCase;
 
-import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
-public class FieldCapabilitiesResponseTests extends ESTestCase {
-    private FieldCapabilitiesResponse randomResponse() {
-        Map<String, Map<String, FieldCapabilities> > fieldMap = new HashMap<> ();
-        int numFields = randomInt(10);
-        for (int i = 0; i < numFields; i++) {
-            String fieldName = randomAlphaOfLengthBetween(5, 10);
-            int numIndices = randomIntBetween(1, 5);
-            Map<String, FieldCapabilities> indexFieldMap = new HashMap<> ();
-            for (int j = 0; j < numIndices; j++) {
-                String index = randomAlphaOfLengthBetween(10, 20);
-                indexFieldMap.put(index, FieldCapabilitiesTests.randomFieldCaps());
-            }
-            fieldMap.put(fieldName, indexFieldMap);
+import static com.carrotsearch.randomizedtesting.RandomizedTest.randomAsciiLettersOfLength;
+
+public class FieldCapabilitiesResponseTests extends AbstractWireSerializingTestCase<FieldCapabilitiesResponse> {
+
+    @Override
+    protected FieldCapabilitiesResponse createTestInstance() {
+        List<FieldCapabilitiesIndexResponse> responses = new ArrayList<>();
+        int numResponse = randomIntBetween(0, 10);
+
+        for (int i = 0; i < numResponse; i++) {
+            responses.add(createRandomIndexResponse());
         }
-        return new FieldCapabilitiesResponse(fieldMap);
+        return new FieldCapabilitiesResponse(responses);
     }
 
-    public void testSerialization() throws IOException {
-        for (int i = 0; i < 20; i++) {
-            FieldCapabilitiesResponse response = randomResponse();
-            BytesStreamOutput output = new BytesStreamOutput();
-            response.writeTo(output);
-            output.flush();
-            StreamInput input = output.bytes().streamInput();
-            FieldCapabilitiesResponse deserialized = new FieldCapabilitiesResponse();
-            deserialized.readFrom(input);
-            assertEquals(deserialized, response);
-            assertEquals(deserialized.hashCode(), response.hashCode());
+    @Override
+    protected Writeable.Reader<FieldCapabilitiesResponse> instanceReader() {
+        return FieldCapabilitiesResponse::new;
+    }
+
+    private FieldCapabilitiesIndexResponse createRandomIndexResponse() {
+        Map<String, FieldCapabilities> responses = new HashMap<>();
+
+        String[] fields = generateRandomStringArray(5, 10, false, true);
+        assertNotNull(fields);
+
+        for (String field : fields) {
+            responses.put(field, FieldCapabilitiesTests.randomFieldCaps(field));
         }
+        return new FieldCapabilitiesIndexResponse(randomAsciiLettersOfLength(10), responses);
+    }
+
+    @Override
+    protected FieldCapabilitiesResponse mutateInstance(FieldCapabilitiesResponse response) {
+        Map<String, Map<String, FieldCapabilities>> mutatedResponses = new HashMap<>(response.get());
+
+        int mutation = response.get().isEmpty() ? 0 : randomIntBetween(0, 2);
+
+        switch (mutation) {
+            case 0:
+                String toAdd = randomAlphaOfLength(10);
+                mutatedResponses.put(toAdd, Collections.singletonMap(
+                    randomAlphaOfLength(10),
+                    FieldCapabilitiesTests.randomFieldCaps(toAdd)));
+                break;
+            case 1:
+                String toRemove = randomFrom(mutatedResponses.keySet());
+                mutatedResponses.remove(toRemove);
+                break;
+            case 2:
+                String toReplace = randomFrom(mutatedResponses.keySet());
+                mutatedResponses.put(toReplace, Collections.singletonMap(
+                    randomAlphaOfLength(10),
+                    FieldCapabilitiesTests.randomFieldCaps(toReplace)));
+                break;
+        }
+        return new FieldCapabilitiesResponse(null, mutatedResponses);
     }
 }

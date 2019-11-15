@@ -80,6 +80,7 @@ public class GetIndexRequest extends ClusterInfoRequest<GetIndexRequest> {
             features[i] = Feature.fromId(in.readByte());
         }
         humanReadable = in.readBoolean();
+        includeDefaults = in.readBoolean();
     }
 
     public GetIndexRequest features(Feature... features) {
@@ -119,8 +120,7 @@ public class GetIndexRequest extends ClusterInfoRequest<GetIndexRequest> {
 
     /**
      * Sets the value of "include_defaults".
-     * Used only by the high-level REST client.
-     * 
+     *
      * @param includeDefaults value of "include_defaults" to be set.
      * @return this request
      */
@@ -131,18 +131,12 @@ public class GetIndexRequest extends ClusterInfoRequest<GetIndexRequest> {
 
     /**
      * Whether to return all default settings for each of the indices.
-     * Used only by the high-level REST client.
-     * 
+     *
      * @return <code>true</code> if defaults settings for each of the indices need to returned;
      * <code>false</code> otherwise.
      */
     public boolean includeDefaults() {
         return includeDefaults;
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        throw new UnsupportedOperationException("usage of Streamable is to be replaced by Writeable");
     }
 
     @Override
@@ -153,6 +147,6 @@ public class GetIndexRequest extends ClusterInfoRequest<GetIndexRequest> {
             out.writeByte(feature.id);
         }
         out.writeBoolean(humanReadable);
+        out.writeBoolean(includeDefaults);
     }
-
 }

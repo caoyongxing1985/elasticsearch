@@ -33,6 +33,7 @@ import org.elasticsearch.common.lucene.index.FilterableTermsEnum;
 import org.elasticsearch.common.lucene.index.FreqTermsEnum;
 import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.query.QueryBuilder;
+import org.elasticsearch.index.query.QueryShardContext;
 import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.aggregations.Aggregator;
 import org.elasticsearch.search.aggregations.AggregatorFactories;
@@ -49,7 +50,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
-public class SignificantTextAggregatorFactory extends AggregatorFactory<SignificantTextAggregatorFactory>
+public class SignificantTextAggregatorFactory extends AggregatorFactory
         implements Releasable {
 
     private final IncludeExclude includeExclude;
@@ -65,20 +66,34 @@ public class SignificantTextAggregatorFactory extends AggregatorFactory<Signific
     private final DocValueFormat format = DocValueFormat.RAW;
     private final boolean filterDuplicateText;
 
-    public SignificantTextAggregatorFactory(String name, IncludeExclude includeExclude,
-            QueryBuilder filterBuilder, TermsAggregator.BucketCountThresholds bucketCountThresholds,
-            SignificanceHeuristic significanceHeuristic, SearchContext context, AggregatorFactory<?> parent,
-            AggregatorFactories.Builder subFactoriesBuilder, String fieldName, String [] sourceFieldNames,
-            boolean filterDuplicateText, Map<String, Object> metaData) throws IOException {
-        super(name, context, parent, subFactoriesBuilder, metaData);
+    public SignificantTextAggregatorFactory(String name,
+                                                IncludeExclude includeExclude,
+                                                QueryBuilder filterBuilder,
+                                                TermsAggregator.BucketCountThresholds bucketCountThresholds,
+                                                SignificanceHeuristic significanceHeuristic,
+                                                QueryShardContext queryShardContext,
+                                                AggregatorFactory parent,
+                                                AggregatorFactories.Builder subFactoriesBuilder,
+                                                String fieldName,
+                                                String [] sourceFieldNames,
+                                                boolean filterDuplicateText,
+                                                Map<String, Object> metaData) throws IOException {
+        super(name, queryShardContext, parent, subFactoriesBuilder, metaData);
+
+        // Note that if the field is unmapped (its field type is null), we don't fail,
+        // and just use the given field name as a placeholder.
+        this.fieldType = queryShardContext.fieldMapper(fieldName);
+        this.indexedFieldName = fieldType != null ? fieldType.name() : fieldName;
+        this.sourceFieldNames = sourceFieldNames == null
+            ? new String[] { indexedFieldName }
+            : sourceFieldNames;
+
         this.includeExclude = includeExclude;
         this.filter = filterBuilder == null
                 ? null
-                : filterBuilder.toQuery(context.getQueryShardContext());
-        this.indexedFieldName = fieldName;
-        this.sourceFieldNames = sourceFieldNames;
+                : filterBuilder.toQuery(queryShardContext);
         this.filterDuplicateText = filterDuplicateText;
-        IndexSearcher searcher = context.searcher();
+        IndexSearcher searcher = queryShardContext.searcher();
         // Important - need to use the doc count that includes deleted docs
         // or we have this issue: https://github.com/elastic/elasticsearch/issues/7951
         this.supersetNumDocs = filter == null
@@ -86,10 +101,7 @@ public class SignificantTextAggregatorFactory extends AggregatorFactory<Signific
                 : searcher.count(filter);
         this.bucketCountThresholds = bucketCountThresholds;
         this.significanceHeuristic = significanceHeuristic;
-        fieldType = context.getQueryShardContext().fieldMapper(indexedFieldName);
-
     }
-
 
     /**
      * Get the number of docs in the superset.
@@ -102,9 +114,9 @@ public class SignificantTextAggregatorFactory extends AggregatorFactory<Signific
         if (termsEnum != null) {
             return termsEnum;
         }
-        IndexReader reader = context.searcher().getIndexReader();
+        IndexReader reader = queryShardContext.getIndexReader();
         if (numberOfAggregatorsCreated > 1) {
-            termsEnum = new FreqTermsEnum(reader, field, true, false, filter, context.bigArrays());
+            termsEnum = new FreqTermsEnum(reader, field, true, false, filter, queryShardContext.bigArrays());
         } else {
             termsEnum = new FilterableTermsEnum(reader, indexedFieldName, PostingsEnum.NONE, filter);
         }
@@ -112,7 +124,7 @@ public class SignificantTextAggregatorFactory extends AggregatorFactory<Signific
     }
 
     private long getBackgroundFrequency(String value) throws IOException {
-        Query query = fieldType.termQuery(value, context.getQueryShardContext());
+        Query query = fieldType.termQuery(value, queryShardContext);
         if (query instanceof TermQuery) {
             // for types that use the inverted index, we prefer using a caching terms
             // enum that will do a better job at reusing index inputs
@@ -131,15 +143,15 @@ public class SignificantTextAggregatorFactory extends AggregatorFactory<Signific
                     .add(filter, Occur.FILTER)
                     .build();
         }
-        return context.searcher().count(query);
+        return queryShardContext.searcher().count(query);
     }
-    
-    public long getBackgroundFrequency(BytesRef termBytes) throws IOException {
-        String value = format.format(termBytes);
-        return getBackgroundFrequency(value);
-    }    
 
-    
+    public long getBackgroundFrequency(BytesRef termBytes) throws IOException {
+        String value = format.format(termBytes).toString();
+        return getBackgroundFrequency(value);
+    }
+
+
     @Override
     public void close() {
         try {
@@ -152,13 +164,13 @@ public class SignificantTextAggregatorFactory extends AggregatorFactory<Signific
     }
 
     @Override
-    protected Aggregator createInternal(Aggregator parent, boolean collectsFromSingleBucket,
-            List<PipelineAggregator> pipelineAggregators, Map<String, Object> metaData)
-            throws IOException {        
+    protected Aggregator createInternal(SearchContext searchContext, Aggregator parent, boolean collectsFromSingleBucket,
+                                        List<PipelineAggregator> pipelineAggregators, Map<String, Object> metaData)
+            throws IOException {
         if (collectsFromSingleBucket == false) {
-            return asMultiBucketAggregator(this, context, parent);
+            return asMultiBucketAggregator(this, searchContext, parent);
         }
-        
+
         numberOfAggregatorsCreated++;
         BucketCountThresholds bucketCountThresholds = new BucketCountThresholds(this.bucketCountThresholds);
         if (bucketCountThresholds.getShardSize() == SignificantTextAggregationBuilder.DEFAULT_BUCKET_COUNT_THRESHOLDS.getShardSize()) {
@@ -166,21 +178,20 @@ public class SignificantTextAggregatorFactory extends AggregatorFactory<Signific
             // Use default heuristic to avoid any wrong-ranking caused by
             // distributed counting but request double the usual amount.
             // We typically need more than the number of "top" terms requested
-            // by other aggregations as the significance algorithm is in less 
+            // by other aggregations as the significance algorithm is in less
             // of a position to down-select at shard-level - some of the things
             // we want to find have only one occurrence on each shard and as
             // such are impossible to differentiate from non-significant terms
             // at that early stage.
-            bucketCountThresholds.setShardSize(2 * BucketUtils.suggestShardSideQueueSize(bucketCountThresholds.getRequiredSize(),
-                    context.numberOfShards()));
+            bucketCountThresholds.setShardSize(2 * BucketUtils.suggestShardSideQueueSize(bucketCountThresholds.getRequiredSize()));
         }
 
 //        TODO - need to check with mapping that this is indeed a text field....
 
-        IncludeExclude.StringFilter incExcFilter = includeExclude == null ? null: 
+        IncludeExclude.StringFilter incExcFilter = includeExclude == null ? null:
             includeExclude.convertToStringFilter(DocValueFormat.RAW);
-        
-        return new SignificantTextAggregator(name, factories, context, parent, pipelineAggregators, bucketCountThresholds,
+
+        return new SignificantTextAggregator(name, factories, searchContext, parent, pipelineAggregators, bucketCountThresholds,
                 incExcFilter, significanceHeuristic, this, indexedFieldName, sourceFieldNames, filterDuplicateText, metaData);
 
     }

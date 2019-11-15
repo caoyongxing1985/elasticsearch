@@ -76,7 +76,7 @@ public class SuggestStatsIT extends ESIntegTestCase {
         ensureGreen();
 
         for (int i = 0; i < randomIntBetween(20, 100); i++) {
-            index("test" + ((i % 2) + 1), "type", "" + i, "f", "test" + i);
+            indexDoc("test" + ((i % 2) + 1), "" + i, "f", "test" + i);
         }
         refresh();
 
@@ -106,9 +106,12 @@ public class SuggestStatsIT extends ESIntegTestCase {
         assertThat(suggest.getSuggestCurrent(), equalTo(0L));
 
         // check suggest count
-        assertThat(suggest.getSuggestCount(), equalTo((long) (suggestAllIdx * totalShards + suggestIdx1 * shardsIdx1 + suggestIdx2 * shardsIdx2)));
-        assertThat(indicesStats.getIndices().get("test1").getTotal().getSearch().getTotal().getSuggestCount(), equalTo((long) ((suggestAllIdx + suggestIdx1) * shardsIdx1)));
-        assertThat(indicesStats.getIndices().get("test2").getTotal().getSearch().getTotal().getSuggestCount(), equalTo((long) ((suggestAllIdx + suggestIdx2) * shardsIdx2)));
+        assertThat(suggest.getSuggestCount(),
+            equalTo((long) (suggestAllIdx * totalShards + suggestIdx1 * shardsIdx1 + suggestIdx2 * shardsIdx2)));
+        assertThat(indicesStats.getIndices().get("test1").getTotal().getSearch().getTotal().getSuggestCount(),
+            equalTo((long) ((suggestAllIdx + suggestIdx1) * shardsIdx1)));
+        assertThat(indicesStats.getIndices().get("test2").getTotal().getSearch().getTotal().getSuggestCount(),
+            equalTo((long) ((suggestAllIdx + suggestIdx2) * shardsIdx2)));
 
         logger.info("iter {}, iter1 {}, iter2 {}, {}", suggestAllIdx, suggestIdx1, suggestIdx2, endTime - startTime);
         // check suggest time

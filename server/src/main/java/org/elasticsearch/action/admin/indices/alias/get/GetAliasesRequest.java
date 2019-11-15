@@ -32,15 +32,12 @@ public class GetAliasesRequest extends MasterNodeReadRequest<GetAliasesRequest> 
 
     private String[] indices = Strings.EMPTY_ARRAY;
     private String[] aliases = Strings.EMPTY_ARRAY;
-
     private IndicesOptions indicesOptions = IndicesOptions.strictExpand();
+    private String[] originalAliases = Strings.EMPTY_ARRAY;
 
-    public GetAliasesRequest(String[] aliases) {
+    public GetAliasesRequest(String... aliases) {
         this.aliases = aliases;
-    }
-
-    public GetAliasesRequest(String alias) {
-        this.aliases = new String[]{alias};
+        this.originalAliases = aliases;
     }
 
     public GetAliasesRequest() {
@@ -51,6 +48,7 @@ public class GetAliasesRequest extends MasterNodeReadRequest<GetAliasesRequest> 
         indices = in.readStringArray();
         aliases = in.readStringArray();
         indicesOptions = IndicesOptions.readIndicesOptions(in);
+        originalAliases = in.readStringArray();
     }
 
     @Override
@@ -59,6 +57,7 @@ public class GetAliasesRequest extends MasterNodeReadRequest<GetAliasesRequest> 
         out.writeStringArray(indices);
         out.writeStringArray(aliases);
         indicesOptions.writeIndicesOptions(out);
+        out.writeStringArray(originalAliases);
     }
 
     @Override
@@ -67,9 +66,9 @@ public class GetAliasesRequest extends MasterNodeReadRequest<GetAliasesRequest> 
         return this;
     }
 
-    @Override
     public GetAliasesRequest aliases(String... aliases) {
         this.aliases = aliases;
+        this.originalAliases = aliases;
         return this;
     }
 
@@ -89,6 +88,18 @@ public class GetAliasesRequest extends MasterNodeReadRequest<GetAliasesRequest> 
     }
 
     @Override
+    public void replaceAliases(String... aliases) {
+        this.aliases = aliases;
+    }
+
+    /**
+     * Returns the aliases as was originally specified by the user
+     */
+    public String[] getOriginalAliases() {
+        return originalAliases;
+    }
+
+    @Override
     public boolean expandAliasesWildcards() {
         return true;
     }
@@ -101,10 +112,5 @@ public class GetAliasesRequest extends MasterNodeReadRequest<GetAliasesRequest> 
     @Override
     public ActionRequestValidationException validate() {
         return null;
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        throw new UnsupportedOperationException("usage of Streamable is to be replaced by Writeable");
     }
 }

@@ -25,16 +25,22 @@ import org.apache.lucene.geo.GeoEncodingUtils;
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.util.BitUtil;
 import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.common.geo.GeoUtils.EffectivePoint;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.ElasticsearchParseException;
-import org.elasticsearch.common.Strings;
+import org.elasticsearch.geometry.Geometry;
+import org.elasticsearch.geometry.Point;
+import org.elasticsearch.geometry.Rectangle;
+import org.elasticsearch.geometry.ShapeType;
+import org.elasticsearch.geometry.utils.GeographyValidator;
+import org.elasticsearch.geometry.utils.Geohash;
+import org.elasticsearch.geometry.utils.WellKnownText;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Locale;
 
-import static org.elasticsearch.common.geo.GeoHashUtils.mortonEncode;
-import static org.elasticsearch.common.geo.GeoHashUtils.stringEncode;
 import static org.elasticsearch.index.mapper.GeoPointFieldMapper.Names.IGNORE_Z_VALUE;
 
 public final class GeoPoint implements ToXContentFragment {
@@ -81,29 +87,80 @@ public final class GeoPoint implements ToXContentFragment {
     }
 
     public GeoPoint resetFromString(String value) {
-        return resetFromString(value, false);
+        return resetFromString(value, false, EffectivePoint.BOTTOM_LEFT);
     }
 
-    public GeoPoint resetFromString(String value, final boolean ignoreZValue) {
-        if (value.contains(",")) {
-            String[] vals = value.split(",");
-            if (vals.length > 3) {
-                throw new ElasticsearchParseException("failed to parse [{}], expected 2 or 3 coordinates "
-                    + "but found: [{}]", vals.length);
-            }
-            double lat = Double.parseDouble(vals[0].trim());
-            double lon = Double.parseDouble(vals[1].trim());
-            if (vals.length > 2) {
-                GeoPoint.assertZValue(ignoreZValue, Double.parseDouble(vals[2].trim()));
-            }
-            return reset(lat, lon);
+    public GeoPoint resetFromString(String value, final boolean ignoreZValue, EffectivePoint effectivePoint) {
+        if (value.toLowerCase(Locale.ROOT).contains("point")) {
+            return resetFromWKT(value, ignoreZValue);
+        } else if (value.contains(",")) {
+            return resetFromCoordinates(value, ignoreZValue);
         }
-        return resetFromGeoHash(value);
+        return parseGeoHash(value, effectivePoint);
+    }
+
+
+    public GeoPoint resetFromCoordinates(String value, final boolean ignoreZValue) {
+        String[] vals = value.split(",");
+        if (vals.length > 3) {
+            throw new ElasticsearchParseException("failed to parse [{}], expected 2 or 3 coordinates "
+                + "but found: [{}]", vals.length);
+        }
+        final double lat;
+        final double lon;
+        try {
+            lat = Double.parseDouble(vals[0].trim());
+         } catch (NumberFormatException ex) {
+            throw new ElasticsearchParseException("latitude must be a number");
+        }
+        try {
+            lon = Double.parseDouble(vals[1].trim());
+        } catch (NumberFormatException ex) {
+            throw new ElasticsearchParseException("longitude must be a number");
+        }
+        if (vals.length > 2) {
+            GeoPoint.assertZValue(ignoreZValue, Double.parseDouble(vals[2].trim()));
+        }
+        return reset(lat, lon);
+    }
+
+    private GeoPoint resetFromWKT(String value, boolean ignoreZValue) {
+        Geometry geometry;
+        try {
+            geometry = new WellKnownText(false, new GeographyValidator(ignoreZValue))
+                .fromWKT(value);
+        } catch (Exception e) {
+            throw new ElasticsearchParseException("Invalid WKT format", e);
+        }
+        if (geometry.type() != ShapeType.POINT) {
+            throw new ElasticsearchParseException("[geo_point] supports only POINT among WKT primitives, " +
+                "but found " + geometry.type());
+        }
+        Point point = (Point) geometry;
+        return reset(point.getY(), point.getX());
+    }
+
+    GeoPoint parseGeoHash(String geohash, EffectivePoint effectivePoint) {
+        if (effectivePoint == EffectivePoint.BOTTOM_LEFT) {
+            return resetFromGeoHash(geohash);
+        } else {
+            Rectangle rectangle = Geohash.toBoundingBox(geohash);
+            switch (effectivePoint) {
+                case TOP_LEFT:
+                    return reset(rectangle.getMaxY(), rectangle.getMinX());
+                case TOP_RIGHT:
+                    return reset(rectangle.getMaxY(), rectangle.getMaxX());
+                case BOTTOM_RIGHT:
+                    return reset(rectangle.getMinY(), rectangle.getMaxX());
+                default:
+                    throw new IllegalArgumentException("Unsupported effective point " + effectivePoint);
+            }
+        }
     }
 
     public GeoPoint resetFromIndexHash(long hash) {
-        lon = GeoHashUtils.decodeLongitude(hash);
-        lat = GeoHashUtils.decodeLatitude(hash);
+        lon = Geohash.decodeLongitude(hash);
+        lat = Geohash.decodeLatitude(hash);
         return this;
     }
 
@@ -126,8 +183,13 @@ public final class GeoPoint implements ToXContentFragment {
     }
 
     public GeoPoint resetFromGeoHash(String geohash) {
-        final long hash = mortonEncode(geohash);
-        return this.reset(GeoHashUtils.decodeLatitude(hash), GeoHashUtils.decodeLongitude(hash));
+        final long hash;
+        try {
+            hash = Geohash.mortonEncode(geohash);
+        } catch (IllegalArgumentException ex) {
+            throw new ElasticsearchParseException(ex.getMessage(), ex);
+        }
+        return this.reset(Geohash.decodeLatitude(hash), Geohash.decodeLongitude(hash));
     }
 
     public GeoPoint resetFromGeoHash(long geohashLong) {
@@ -152,11 +214,11 @@ public final class GeoPoint implements ToXContentFragment {
     }
 
     public String geohash() {
-        return stringEncode(lon, lat);
+        return Geohash.stringEncode(lon, lat);
     }
 
     public String getGeohash() {
-        return stringEncode(lon, lat);
+        return Geohash.stringEncode(lon, lat);
     }
 
     @Override
@@ -186,11 +248,6 @@ public final class GeoPoint implements ToXContentFragment {
     @Override
     public String toString() {
         return lat + ", " + lon;
-    }
-
-    public static GeoPoint parseFromLatLon(String latLon) {
-        GeoPoint point = new GeoPoint(latLon);
-        return point;
     }
 
     public static GeoPoint fromGeohash(String geohash) {

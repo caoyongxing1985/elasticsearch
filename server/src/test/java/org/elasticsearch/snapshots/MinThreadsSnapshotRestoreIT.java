@@ -20,7 +20,7 @@
 package org.elasticsearch.snapshots;
 
 import org.elasticsearch.action.ActionFuture;
-import org.elasticsearch.action.admin.cluster.snapshots.delete.DeleteSnapshotResponse;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.plugins.Plugin;
@@ -66,7 +66,7 @@ public class MinThreadsSnapshotRestoreIT extends AbstractSnapshotIntegTestCase {
         final String index = "test-idx1";
         assertAcked(prepareCreate(index, 1, Settings.builder().put("number_of_shards", 1).put("number_of_replicas", 0)));
         for (int i = 0; i < 10; i++) {
-            index(index, "_doc", Integer.toString(i), "foo", "bar" + i);
+            indexDoc(index, Integer.toString(i), "foo", "bar" + i);
         }
         refresh();
         final String snapshot1 = "test-snap1";
@@ -74,7 +74,7 @@ public class MinThreadsSnapshotRestoreIT extends AbstractSnapshotIntegTestCase {
         final String index2 = "test-idx2";
         assertAcked(prepareCreate(index2, 1, Settings.builder().put("number_of_shards", 1).put("number_of_replicas", 0)));
         for (int i = 0; i < 10; i++) {
-            index(index2, "_doc", Integer.toString(i), "foo", "bar" + i);
+            indexDoc(index2, Integer.toString(i), "foo", "bar" + i);
         }
         refresh();
         final String snapshot2 = "test-snap2";
@@ -83,7 +83,7 @@ public class MinThreadsSnapshotRestoreIT extends AbstractSnapshotIntegTestCase {
         String blockedNode = internalCluster().getMasterName();
         ((MockRepository)internalCluster().getInstance(RepositoriesService.class, blockedNode).repository(repo)).blockOnDataFiles(true);
         logger.info("--> start deletion of first snapshot");
-        ActionFuture<DeleteSnapshotResponse> future =
+        ActionFuture<AcknowledgedResponse> future =
             client().admin().cluster().prepareDeleteSnapshot(repo, snapshot2).execute();
         logger.info("--> waiting for block to kick in on node [{}]", blockedNode);
         waitForBlock(blockedNode, repo, TimeValue.timeValueSeconds(10));
@@ -104,7 +104,7 @@ public class MinThreadsSnapshotRestoreIT extends AbstractSnapshotIntegTestCase {
 
         logger.info("--> delete second snapshot, which should now work");
         client().admin().cluster().prepareDeleteSnapshot(repo, snapshot1).get();
-        assertTrue(client().admin().cluster().prepareGetSnapshots(repo).setSnapshots("_all").get().getSnapshots().isEmpty());
+        assertTrue(client().admin().cluster().prepareGetSnapshots(repo).setSnapshots("_all").get().getSnapshots(repo).isEmpty());
     }
 
     public void testSnapshottingWithInProgressDeletionNotAllowed() throws Exception {
@@ -120,7 +120,7 @@ public class MinThreadsSnapshotRestoreIT extends AbstractSnapshotIntegTestCase {
         final String index = "test-idx";
         assertAcked(prepareCreate(index, 1, Settings.builder().put("number_of_shards", 1).put("number_of_replicas", 0)));
         for (int i = 0; i < 10; i++) {
-            index(index, "_doc", Integer.toString(i), "foo", "bar" + i);
+            indexDoc(index, Integer.toString(i), "foo", "bar" + i);
         }
         refresh();
         final String snapshot1 = "test-snap1";
@@ -129,7 +129,7 @@ public class MinThreadsSnapshotRestoreIT extends AbstractSnapshotIntegTestCase {
         String blockedNode = internalCluster().getMasterName();
         ((MockRepository)internalCluster().getInstance(RepositoriesService.class, blockedNode).repository(repo)).blockOnDataFiles(true);
         logger.info("--> start deletion of snapshot");
-        ActionFuture<DeleteSnapshotResponse> future = client().admin().cluster().prepareDeleteSnapshot(repo, snapshot1).execute();
+        ActionFuture<AcknowledgedResponse> future = client().admin().cluster().prepareDeleteSnapshot(repo, snapshot1).execute();
         logger.info("--> waiting for block to kick in on node [{}]", blockedNode);
         waitForBlock(blockedNode, repo, TimeValue.timeValueSeconds(10));
 
@@ -150,7 +150,7 @@ public class MinThreadsSnapshotRestoreIT extends AbstractSnapshotIntegTestCase {
 
         logger.info("--> creating second snapshot, which should now work");
         client().admin().cluster().prepareCreateSnapshot(repo, snapshot2).setWaitForCompletion(true).get();
-        assertEquals(1, client().admin().cluster().prepareGetSnapshots(repo).setSnapshots("_all").get().getSnapshots().size());
+        assertEquals(1, client().admin().cluster().prepareGetSnapshots(repo).setSnapshots("_all").get().getSnapshots(repo).size());
     }
 
     public void testRestoreWithInProgressDeletionsNotAllowed() throws Exception {
@@ -166,7 +166,7 @@ public class MinThreadsSnapshotRestoreIT extends AbstractSnapshotIntegTestCase {
         final String index = "test-idx";
         assertAcked(prepareCreate(index, 1, Settings.builder().put("number_of_shards", 1).put("number_of_replicas", 0)));
         for (int i = 0; i < 10; i++) {
-            index(index, "_doc", Integer.toString(i), "foo", "bar" + i);
+            indexDoc(index, Integer.toString(i), "foo", "bar" + i);
         }
         refresh();
         final String snapshot1 = "test-snap1";
@@ -174,7 +174,7 @@ public class MinThreadsSnapshotRestoreIT extends AbstractSnapshotIntegTestCase {
         final String index2 = "test-idx2";
         assertAcked(prepareCreate(index2, 1, Settings.builder().put("number_of_shards", 1).put("number_of_replicas", 0)));
         for (int i = 0; i < 10; i++) {
-            index(index2, "_doc", Integer.toString(i), "foo", "bar" + i);
+            indexDoc(index2, Integer.toString(i), "foo", "bar" + i);
         }
         refresh();
         final String snapshot2 = "test-snap2";
@@ -184,7 +184,7 @@ public class MinThreadsSnapshotRestoreIT extends AbstractSnapshotIntegTestCase {
         String blockedNode = internalCluster().getMasterName();
         ((MockRepository)internalCluster().getInstance(RepositoriesService.class, blockedNode).repository(repo)).blockOnDataFiles(true);
         logger.info("--> start deletion of snapshot");
-        ActionFuture<DeleteSnapshotResponse> future = client().admin().cluster().prepareDeleteSnapshot(repo, snapshot2).execute();
+        ActionFuture<AcknowledgedResponse> future = client().admin().cluster().prepareDeleteSnapshot(repo, snapshot2).execute();
         logger.info("--> waiting for block to kick in on node [{}]", blockedNode);
         waitForBlock(blockedNode, repo, TimeValue.timeValueSeconds(10));
 
@@ -204,6 +204,6 @@ public class MinThreadsSnapshotRestoreIT extends AbstractSnapshotIntegTestCase {
 
         logger.info("--> restoring snapshot, which should now work");
         client().admin().cluster().prepareRestoreSnapshot(repo, snapshot1).setWaitForCompletion(true).get();
-        assertEquals(1, client().admin().cluster().prepareGetSnapshots(repo).setSnapshots("_all").get().getSnapshots().size());
+        assertEquals(1, client().admin().cluster().prepareGetSnapshots(repo).setSnapshots("_all").get().getSnapshots(repo).size());
     }
 }

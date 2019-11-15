@@ -19,19 +19,6 @@
 
 package org.elasticsearch.repositories.hdfs;
 
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.nio.charset.Charset;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.security.AccessController;
-import java.security.PrivilegedActionException;
-import java.security.PrivilegedExceptionAction;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.ha.BadFencingConfigurationException;
 import org.apache.hadoop.ha.HAServiceProtocol;
@@ -42,14 +29,22 @@ import org.apache.hadoop.ha.protocolPB.HAServiceProtocolClientSideTranslatorPB;
 import org.apache.hadoop.hdfs.tools.DFSHAAdmin;
 import org.apache.hadoop.security.SecurityUtil;
 import org.apache.hadoop.security.UserGroupInformation;
-import org.apache.http.Header;
-import org.apache.http.message.BasicHeader;
-import org.apache.http.nio.entity.NStringEntity;
+import org.elasticsearch.client.Request;
 import org.elasticsearch.client.Response;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.common.io.PathUtils;
 import org.elasticsearch.test.rest.ESRestTestCase;
 import org.junit.Assert;
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.AccessController;
+import java.security.PrivilegedActionException;
+import java.security.PrivilegedExceptionAction;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Integration test that runs against an HA-Enabled HDFS instance
@@ -58,19 +53,28 @@ public class HaHdfsFailoverTestSuiteIT extends ESRestTestCase {
 
     public void testHAFailoverWithRepository() throws Exception {
         RestClient client = client();
-        Map<String, String> emptyParams = Collections.emptyMap();
-        Header contentHeader = new BasicHeader("Content-Type", "application/json");
 
         String esKerberosPrincipal = System.getProperty("test.krb5.principal.es");
         String hdfsKerberosPrincipal = System.getProperty("test.krb5.principal.hdfs");
         String kerberosKeytabLocation = System.getProperty("test.krb5.keytab.hdfs");
+        String ports = System.getProperty("test.hdfs-fixture.ports");
+        String nn1Port = "10001";
+        String nn2Port = "10002";
+        if (ports.length() > 0) {
+             final Path path = PathUtils.get(ports);
+             final List<String> lines = AccessController.doPrivileged((PrivilegedExceptionAction<List<String>>) () -> {
+                return Files.readAllLines(path);
+             });
+             nn1Port = lines.get(0);
+             nn2Port = lines.get(1);
+        }
         boolean securityEnabled = hdfsKerberosPrincipal != null;
 
         Configuration hdfsConfiguration = new Configuration();
         hdfsConfiguration.set("dfs.nameservices", "ha-hdfs");
         hdfsConfiguration.set("dfs.ha.namenodes.ha-hdfs", "nn1,nn2");
-        hdfsConfiguration.set("dfs.namenode.rpc-address.ha-hdfs.nn1", "localhost:10001");
-        hdfsConfiguration.set("dfs.namenode.rpc-address.ha-hdfs.nn2", "localhost:10002");
+        hdfsConfiguration.set("dfs.namenode.rpc-address.ha-hdfs.nn1", "localhost:" + nn1Port);
+        hdfsConfiguration.set("dfs.namenode.rpc-address.ha-hdfs.nn2", "localhost:" + nn2Port);
         hdfsConfiguration.set(
             "dfs.client.failover.proxy.provider.ha-hdfs",
             "org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider"
@@ -106,7 +110,8 @@ public class HaHdfsFailoverTestSuiteIT extends ESRestTestCase {
 
         // Create repository
         {
-            Response response = client.performRequest("PUT", "/_snapshot/hdfs_ha_repo_read", emptyParams, new NStringEntity(
+            Request request = new Request("PUT", "/_snapshot/hdfs_ha_repo_read");
+            request.setJsonEntity(
                 "{" +
                     "\"type\":\"hdfs\"," +
                     "\"settings\":{" +
@@ -116,20 +121,20 @@ public class HaHdfsFailoverTestSuiteIT extends ESRestTestCase {
                         securityCredentials(securityEnabled, esKerberosPrincipal) +
                         "\"conf.dfs.nameservices\": \"ha-hdfs\"," +
                         "\"conf.dfs.ha.namenodes.ha-hdfs\": \"nn1,nn2\"," +
-                        "\"conf.dfs.namenode.rpc-address.ha-hdfs.nn1\": \"localhost:10001\"," +
-                        "\"conf.dfs.namenode.rpc-address.ha-hdfs.nn2\": \"localhost:10002\"," +
+                        "\"conf.dfs.namenode.rpc-address.ha-hdfs.nn1\": \"localhost:"+nn1Port+"\"," +
+                        "\"conf.dfs.namenode.rpc-address.ha-hdfs.nn2\": \"localhost:"+nn2Port+"\"," +
                         "\"conf.dfs.client.failover.proxy.provider.ha-hdfs\": " +
                             "\"org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider\"" +
                     "}" +
-                "}",
-                Charset.defaultCharset()), contentHeader);
+                "}");
+            Response response = client.performRequest(request);
 
             Assert.assertEquals(200, response.getStatusLine().getStatusCode());
         }
 
         // Get repository
         {
-            Response response = client.performRequest("GET", "/_snapshot/hdfs_ha_repo_read/_all", emptyParams);
+            Response response = client.performRequest(new Request("GET", "/_snapshot/hdfs_ha_repo_read/_all"));
             Assert.assertEquals(200, response.getStatusLine().getStatusCode());
         }
 
@@ -138,7 +143,7 @@ public class HaHdfsFailoverTestSuiteIT extends ESRestTestCase {
 
         // Get repository again
         {
-            Response response = client.performRequest("GET", "/_snapshot/hdfs_ha_repo_read/_all", emptyParams);
+            Response response = client.performRequest(new Request("GET", "/_snapshot/hdfs_ha_repo_read/_all"));
             Assert.assertEquals(200, response.getStatusLine().getStatusCode());
         }
     }

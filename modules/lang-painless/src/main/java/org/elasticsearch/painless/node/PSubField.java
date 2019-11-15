@@ -19,12 +19,16 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Field;
+import org.elasticsearch.painless.ClassWriter;
+import org.elasticsearch.painless.CompilerSettings;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
+import org.elasticsearch.painless.ScriptRoot;
+import org.elasticsearch.painless.lookup.PainlessField;
+import org.elasticsearch.painless.lookup.PainlessLookupUtility;
+import org.objectweb.asm.Type;
 
 import java.lang.reflect.Modifier;
 import java.util.Objects;
@@ -35,12 +39,17 @@ import java.util.Set;
  */
 final class PSubField extends AStoreable {
 
-    private final Field field;
+    private final PainlessField field;
 
-    PSubField(Location location, Field field) {
+    PSubField(Location location, PainlessField field) {
         super(location);
 
         this.field = Objects.requireNonNull(field);
+    }
+
+    @Override
+    void storeSettings(CompilerSettings settings) {
+        throw createError(new IllegalStateException("illegal tree structure"));
     }
 
     @Override
@@ -49,23 +58,25 @@ final class PSubField extends AStoreable {
     }
 
     @Override
-    void analyze(Locals locals) {
-         if (write && Modifier.isFinal(field.modifiers)) {
-             throw createError(new IllegalArgumentException(
-                 "Cannot write to read-only field [" + field.name + "] for type [" + Definition.ClassToName(field.clazz) + "]."));
+    void analyze(ScriptRoot scriptRoot, Locals locals) {
+         if (write && Modifier.isFinal(field.javaField.getModifiers())) {
+             throw createError(new IllegalArgumentException("Cannot write to read-only field [" + field.javaField.getName() + "] " +
+                     "for type [" + PainlessLookupUtility.typeToCanonicalTypeName(field.javaField.getDeclaringClass()) + "]."));
          }
 
-        actual = field.clazz;
+        actual = field.typeParameter;
     }
 
     @Override
-    void write(MethodWriter writer, Globals globals) {
-        writer.writeDebugInfo(location);
+    void write(ClassWriter classWriter, MethodWriter methodWriter, Globals globals) {
+        methodWriter.writeDebugInfo(location);
 
-        if (java.lang.reflect.Modifier.isStatic(field.modifiers)) {
-            writer.getStatic(field.owner.type, field.javaName, MethodWriter.getType(field.clazz));
+        if (java.lang.reflect.Modifier.isStatic(field.javaField.getModifiers())) {
+            methodWriter.getStatic(Type.getType(
+                    field.javaField.getDeclaringClass()), field.javaField.getName(), MethodWriter.getType(field.typeParameter));
         } else {
-            writer.getField(field.owner.type, field.javaName, MethodWriter.getType(field.clazz));
+            methodWriter.getField(Type.getType(
+                    field.javaField.getDeclaringClass()), field.javaField.getName(), MethodWriter.getType(field.typeParameter));
         }
     }
 
@@ -85,34 +96,38 @@ final class PSubField extends AStoreable {
     }
 
     @Override
-    void setup(MethodWriter writer, Globals globals) {
+    void setup(ClassWriter classWriter, MethodWriter methodWriter,Globals globals) {
         // Do nothing.
     }
 
     @Override
-    void load(MethodWriter writer, Globals globals) {
-        writer.writeDebugInfo(location);
+    void load(ClassWriter classWriter, MethodWriter methodWriter,Globals globals) {
+        methodWriter.writeDebugInfo(location);
 
-        if (java.lang.reflect.Modifier.isStatic(field.modifiers)) {
-            writer.getStatic(field.owner.type, field.javaName, MethodWriter.getType(field.clazz));
+        if (java.lang.reflect.Modifier.isStatic(field.javaField.getModifiers())) {
+            methodWriter.getStatic(Type.getType(
+                    field.javaField.getDeclaringClass()), field.javaField.getName(), MethodWriter.getType(field.typeParameter));
         } else {
-            writer.getField(field.owner.type, field.javaName, MethodWriter.getType(field.clazz));
+            methodWriter.getField(Type.getType(
+                    field.javaField.getDeclaringClass()), field.javaField.getName(), MethodWriter.getType(field.typeParameter));
         }
     }
 
     @Override
-    void store(MethodWriter writer, Globals globals) {
-        writer.writeDebugInfo(location);
+    void store(ClassWriter classWriter, MethodWriter methodWriter,Globals globals) {
+        methodWriter.writeDebugInfo(location);
 
-        if (java.lang.reflect.Modifier.isStatic(field.modifiers)) {
-            writer.putStatic(field.owner.type, field.javaName, MethodWriter.getType(field.clazz));
+        if (java.lang.reflect.Modifier.isStatic(field.javaField.getModifiers())) {
+            methodWriter.putStatic(Type.getType(
+                    field.javaField.getDeclaringClass()), field.javaField.getName(), MethodWriter.getType(field.typeParameter));
         } else {
-            writer.putField(field.owner.type, field.javaName, MethodWriter.getType(field.clazz));
+            methodWriter.putField(Type.getType(
+                    field.javaField.getDeclaringClass()), field.javaField.getName(), MethodWriter.getType(field.typeParameter));
         }
     }
 
     @Override
     public String toString() {
-        return singleLineToString(prefix, field.name);
+        return singleLineToString(prefix, field.javaField.getName());
     }
 }

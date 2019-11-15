@@ -19,25 +19,15 @@
 
 package org.elasticsearch.action.termvectors;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class TermVectorsAction extends Action<TermVectorsRequest, TermVectorsResponse, TermVectorsRequestBuilder> {
+public class TermVectorsAction extends ActionType<TermVectorsResponse> {
 
     public static final TermVectorsAction INSTANCE = new TermVectorsAction();
     public static final String NAME = "indices:data/read/tv";
 
     private TermVectorsAction() {
-        super(NAME);
+        super(NAME, TermVectorsResponse::new);
     }
 
-    @Override
-    public TermVectorsResponse newResponse() {
-        return new TermVectorsResponse();
-    }
-
-    @Override
-    public TermVectorsRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new TermVectorsRequestBuilder(client, this);
-    }
 }

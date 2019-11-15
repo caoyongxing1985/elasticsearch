@@ -19,25 +19,16 @@
 
 package org.elasticsearch.action.admin.indices.alias;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 
-public class IndicesAliasesAction extends Action<IndicesAliasesRequest, IndicesAliasesResponse, IndicesAliasesRequestBuilder> {
+public class IndicesAliasesAction extends ActionType<AcknowledgedResponse> {
 
     public static final IndicesAliasesAction INSTANCE = new IndicesAliasesAction();
     public static final String NAME = "indices:admin/aliases";
 
     private IndicesAliasesAction() {
-        super(NAME);
+        super(NAME, AcknowledgedResponse::new);
     }
 
-    @Override
-    public IndicesAliasesResponse newResponse() {
-        return new IndicesAliasesResponse();
-    }
-
-    @Override
-    public IndicesAliasesRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new IndicesAliasesRequestBuilder(client, this);
-    }
 }

@@ -20,6 +20,7 @@
 package org.elasticsearch.action.delete;
 
 import org.elasticsearch.action.DocWriteResponse;
+import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.rest.RestStatus;
@@ -36,11 +37,21 @@ import static org.elasticsearch.common.xcontent.XContentParserUtils.ensureExpect
  */
 public class DeleteResponse extends DocWriteResponse {
 
-    public DeleteResponse() {
+    public DeleteResponse(StreamInput in) throws IOException {
+        super(in);
     }
 
-    public DeleteResponse(ShardId shardId, String type, String id, long seqNo, long primaryTerm, long version, boolean found) {
-        super(shardId, type, id, seqNo, primaryTerm, version, found ? Result.DELETED : Result.NOT_FOUND);
+    public DeleteResponse(ShardId shardId, String id, long seqNo, long primaryTerm, long version, boolean found) {
+        this(shardId, id, seqNo, primaryTerm, version, found ? Result.DELETED : Result.NOT_FOUND);
+    }
+
+    private DeleteResponse(ShardId shardId, String id, long seqNo, long primaryTerm, long version, Result result) {
+        super(shardId, id, seqNo, primaryTerm, version, assertDeletedOrNotFound(result));
+    }
+
+    private static Result assertDeletedOrNotFound(Result result) {
+        assert result == Result.DELETED || result == Result.NOT_FOUND;
+        return result;
     }
 
     @Override
@@ -53,7 +64,6 @@ public class DeleteResponse extends DocWriteResponse {
         StringBuilder builder = new StringBuilder();
         builder.append("DeleteResponse[");
         builder.append("index=").append(getIndex());
-        builder.append(",type=").append(getType());
         builder.append(",id=").append(getId());
         builder.append(",version=").append(getVersion());
         builder.append(",result=").append(getResult().getLowercase());
@@ -87,8 +97,7 @@ public class DeleteResponse extends DocWriteResponse {
 
         @Override
         public DeleteResponse build() {
-            DeleteResponse deleteResponse = new DeleteResponse(shardId, type, id, seqNo, primaryTerm, version,
-                    result == Result.DELETED ? true : false);
+            DeleteResponse deleteResponse = new DeleteResponse(shardId, id, seqNo, primaryTerm, version, result);
             deleteResponse.setForcedRefresh(forcedRefresh);
             if (shardInfo != null) {
                 deleteResponse.setShardInfo(shardInfo);

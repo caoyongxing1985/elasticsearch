@@ -23,6 +23,7 @@ import org.apache.lucene.index.MultiReader;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.Query;
@@ -40,6 +41,7 @@ import org.elasticsearch.index.query.TermQueryBuilder;
 import org.elasticsearch.test.ESSingleNodeTestCase;
 
 import java.io.IOException;
+import java.util.Collections;
 
 public class NestedHelperTests extends ESSingleNodeTestCase {
 
@@ -113,6 +115,36 @@ public class NestedHelperTests extends ESSingleNodeTestCase {
         assertFalse(new NestedHelper(mapperService).mightMatchNonNestedDocs(new MatchNoDocsQuery(), "nested2"));
         assertFalse(new NestedHelper(mapperService).mightMatchNonNestedDocs(new MatchNoDocsQuery(), "nested3"));
         assertFalse(new NestedHelper(mapperService).mightMatchNonNestedDocs(new MatchNoDocsQuery(), "nested_missing"));
+    }
+
+    public void testTermsQuery() {
+        Query termsQuery = mapperService.fullName("foo").termsQuery(Collections.singletonList("bar"), null);
+        assertFalse(new NestedHelper(mapperService).mightMatchNestedDocs(termsQuery));
+        assertTrue(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested1"));
+        assertTrue(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested2"));
+        assertTrue(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested3"));
+        assertTrue(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested_missing"));
+
+        termsQuery = mapperService.fullName("nested1.foo").termsQuery(Collections.singletonList("bar"), null);
+        assertTrue(new NestedHelper(mapperService).mightMatchNestedDocs(termsQuery));
+        assertFalse(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested1"));
+        assertTrue(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested2"));
+        assertTrue(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested3"));
+        assertTrue(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested_missing"));
+
+        termsQuery = mapperService.fullName("nested2.foo").termsQuery(Collections.singletonList("bar"), null);
+        assertTrue(new NestedHelper(mapperService).mightMatchNestedDocs(termsQuery));
+        assertTrue(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested1"));
+        assertTrue(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested2"));
+        assertTrue(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested3"));
+        assertTrue(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested_missing"));
+
+        termsQuery = mapperService.fullName("nested3.foo").termsQuery(Collections.singletonList("bar"), null);
+        assertTrue(new NestedHelper(mapperService).mightMatchNestedDocs(termsQuery));
+        assertTrue(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested1"));
+        assertTrue(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested2"));
+        assertTrue(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested3"));
+        assertTrue(new NestedHelper(mapperService).mightMatchNonNestedDocs(termsQuery, "nested_missing"));
     }
 
     public void testTermQuery() {
@@ -296,7 +328,7 @@ public class NestedHelperTests extends ESSingleNodeTestCase {
     }
 
     public void testNested() throws IOException {
-        QueryShardContext context = indexService.newQueryShardContext(0, new MultiReader(), () -> 0, null);
+        QueryShardContext context = indexService.newQueryShardContext(0, new IndexSearcher(new MultiReader()), () -> 0, null);
         NestedQueryBuilder queryBuilder = new NestedQueryBuilder("nested1", new MatchAllQueryBuilder(), ScoreMode.Avg);
         ESToParentBlockJoinQuery query = (ESToParentBlockJoinQuery) queryBuilder.toQuery(context);
 

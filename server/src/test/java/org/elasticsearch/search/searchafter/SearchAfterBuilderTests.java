@@ -38,10 +38,13 @@ import org.elasticsearch.search.MultiValueMode;
 import org.elasticsearch.test.ESTestCase;
 
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.Collections;
 
 import static org.elasticsearch.search.searchafter.SearchAfterBuilder.extractSortType;
 import static org.elasticsearch.test.EqualsHashCodeTestUtils.checkEqualsAndHashCode;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 
 public class SearchAfterBuilderTests extends ESTestCase {
@@ -136,11 +139,12 @@ public class SearchAfterBuilderTests extends ESTestCase {
         }
         jsonBuilder.endArray();
         jsonBuilder.endObject();
-        XContentParser parser = createParser(JsonXContent.jsonXContent, BytesReference.bytes(jsonBuilder));
-        parser.nextToken();
-        parser.nextToken();
-        parser.nextToken();
-        return SearchAfterBuilder.fromXContent(parser);
+        try (XContentParser parser = createParser(JsonXContent.jsonXContent, BytesReference.bytes(jsonBuilder))) {
+            parser.nextToken();
+            parser.nextToken();
+            parser.nextToken();
+            return SearchAfterBuilder.fromXContent(parser);
+        }
     }
 
     private static SearchAfterBuilder serializedCopy(SearchAfterBuilder original) throws IOException {
@@ -174,14 +178,53 @@ public class SearchAfterBuilderTests extends ESTestCase {
             builder.startObject();
             searchAfterBuilder.innerToXContent(builder);
             builder.endObject();
-            XContentParser parser = createParser(shuffleXContent(builder));
-            parser.nextToken();
-            parser.nextToken();
-            parser.nextToken();
-            SearchAfterBuilder secondSearchAfterBuilder = SearchAfterBuilder.fromXContent(parser);
-            assertNotSame(searchAfterBuilder, secondSearchAfterBuilder);
-            assertEquals(searchAfterBuilder, secondSearchAfterBuilder);
-            assertEquals(searchAfterBuilder.hashCode(), secondSearchAfterBuilder.hashCode());
+            try (XContentParser parser = createParser(shuffleXContent(builder))) {
+                parser.nextToken();
+                parser.nextToken();
+                parser.nextToken();
+                SearchAfterBuilder secondSearchAfterBuilder = SearchAfterBuilder.fromXContent(parser);
+                assertNotSame(searchAfterBuilder, secondSearchAfterBuilder);
+                assertEquals(searchAfterBuilder, secondSearchAfterBuilder);
+                assertEquals(searchAfterBuilder.hashCode(), secondSearchAfterBuilder.hashCode());
+            }
+        }
+    }
+
+    public void testFromXContentIllegalType() throws Exception {
+        for (XContentType type : XContentType.values()) {
+            // BIG_INTEGER
+            XContentBuilder xContent = XContentFactory.contentBuilder(type);
+            xContent.startObject()
+                .startArray("search_after")
+                .value(new BigInteger("9223372036854776000"))
+                .endArray()
+                .endObject();
+            try (XContentParser parser = createParser(xContent)) {
+                parser.nextToken();
+                parser.nextToken();
+                parser.nextToken();
+                IllegalArgumentException exc = expectThrows(IllegalArgumentException.class, () -> SearchAfterBuilder.fromXContent(parser));
+                assertThat(exc.getMessage(), containsString("BIG_INTEGER"));
+            }
+
+            // BIG_DECIMAL
+            // ignore json and yaml, they parse floating point numbers as floats/doubles
+            if (type == XContentType.JSON || type == XContentType.YAML) {
+                continue;
+            }
+            xContent = XContentFactory.contentBuilder(type);
+            xContent.startObject()
+                .startArray("search_after")
+                    .value(new BigDecimal("9223372036854776003.3"))
+                .endArray()
+                .endObject();
+            try (XContentParser parser = createParser(xContent)) {
+                parser.nextToken();
+                parser.nextToken();
+                parser.nextToken();
+                IllegalArgumentException exc = expectThrows(IllegalArgumentException.class, () -> SearchAfterBuilder.fromXContent(parser));
+                assertThat(exc.getMessage(), containsString("BIG_DECIMAL"));
+            }
         }
     }
 

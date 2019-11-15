@@ -57,12 +57,13 @@ final class MultiSnapshot implements Translog.Snapshot {
     }
 
     @Override
-    public int overriddenOperations() {
-        return overriddenOperations;
+    public int skippedOperations() {
+        return Arrays.stream(translogs).mapToInt(TranslogSnapshot::skippedOperations).sum() + overriddenOperations;
     }
 
     @Override
     public Translog.Operation next() throws IOException {
+        // TODO: Read translog forward in 9.0+
         for (; index >= 0; index--) {
             final TranslogSnapshot current = translogs[index];
             Translog.Operation op;
@@ -87,7 +88,7 @@ final class MultiSnapshot implements Translog.Snapshot {
         private final LongObjectHashMap<CountedBitSet> bitSets = new LongObjectHashMap<>();
 
         /**
-         * Marks this sequence number and returns <tt>true</tt> if it is seen before.
+         * Marks this sequence number and returns {@code true} if it is seen before.
          */
         boolean getAndSet(long value) {
             assert value >= 0;

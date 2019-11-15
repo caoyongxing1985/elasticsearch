@@ -19,15 +19,19 @@
 
 package org.elasticsearch.action.admin.indices.forcemerge;
 
+import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.support.broadcast.BroadcastRequest;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 
 import java.io.IOException;
+import java.util.Arrays;
+
+import static org.elasticsearch.action.ValidateActions.addValidationError;
 
 /**
  * A request to force merging the segments of one or more indices. In order to
- * run a merge on all the indices, pass an empty array or <tt>null</tt> for the
+ * run a merge on all the indices, pass an empty array or {@code null} for the
  * indices.
  * {@link #maxNumSegments(int)} allows to control the number of segments
  * to force merge down to. Defaults to simply checking if a merge needs
@@ -58,8 +62,11 @@ public class ForceMergeRequest extends BroadcastRequest<ForceMergeRequest> {
         super(indices);
     }
 
-    public ForceMergeRequest() {
-
+    public ForceMergeRequest(StreamInput in) throws IOException {
+        super(in);
+        maxNumSegments = in.readInt();
+        onlyExpungeDeletes = in.readBoolean();
+        flush = in.readBoolean();
     }
 
     /**
@@ -81,7 +88,7 @@ public class ForceMergeRequest extends BroadcastRequest<ForceMergeRequest> {
 
     /**
      * Should the merge only expunge deletes from the index, without full merging.
-     * Defaults to full merging (<tt>false</tt>).
+     * Defaults to full merging ({@code false}).
      */
     public boolean onlyExpungeDeletes() {
         return onlyExpungeDeletes;
@@ -89,7 +96,7 @@ public class ForceMergeRequest extends BroadcastRequest<ForceMergeRequest> {
 
     /**
      * Should the merge only expunge deletes from the index, without full merge.
-     * Defaults to full merging (<tt>false</tt>).
+     * Defaults to full merging ({@code false}).
      */
     public ForceMergeRequest onlyExpungeDeletes(boolean onlyExpungeDeletes) {
         this.onlyExpungeDeletes = onlyExpungeDeletes;
@@ -97,14 +104,14 @@ public class ForceMergeRequest extends BroadcastRequest<ForceMergeRequest> {
     }
 
     /**
-     * Should flush be performed after the merge. Defaults to <tt>true</tt>.
+     * Should flush be performed after the merge. Defaults to {@code true}.
      */
     public boolean flush() {
         return flush;
     }
 
     /**
-     * Should flush be performed after the merge. Defaults to <tt>true</tt>.
+     * Should flush be performed after the merge. Defaults to {@code true}.
      */
     public ForceMergeRequest flush(boolean flush) {
         this.flush = flush;
@@ -112,11 +119,11 @@ public class ForceMergeRequest extends BroadcastRequest<ForceMergeRequest> {
     }
 
     @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        maxNumSegments = in.readInt();
-        onlyExpungeDeletes = in.readBoolean();
-        flush = in.readBoolean();
+    public String getDescription() {
+        return "Force-merge indices " + Arrays.toString(indices()) +
+            ", maxSegments[" + maxNumSegments +
+            "], onlyExpungeDeletes[" + onlyExpungeDeletes +
+            "], flush[" + flush + "]";
     }
 
     @Override
@@ -125,6 +132,16 @@ public class ForceMergeRequest extends BroadcastRequest<ForceMergeRequest> {
         out.writeInt(maxNumSegments);
         out.writeBoolean(onlyExpungeDeletes);
         out.writeBoolean(flush);
+    }
+
+    @Override
+    public ActionRequestValidationException validate() {
+        ActionRequestValidationException validationError = super.validate();
+        if (onlyExpungeDeletes && maxNumSegments != Defaults.MAX_NUM_SEGMENTS) {
+            validationError = addValidationError("cannot set only_expunge_deletes and max_num_segments at the same time, those two " +
+                "parameters are mutually exclusive", validationError);
+        }
+        return validationError;
     }
 
     @Override

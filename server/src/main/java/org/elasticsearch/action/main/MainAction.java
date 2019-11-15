@@ -19,25 +19,14 @@
 
 package org.elasticsearch.action.main;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class MainAction extends Action<MainRequest, MainResponse, MainRequestBuilder> {
+public class MainAction extends ActionType<MainResponse> {
 
     public static final String NAME = "cluster:monitor/main";
     public static final MainAction INSTANCE = new MainAction();
 
     public MainAction() {
-        super(NAME);
-    }
-
-    @Override
-    public MainRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new MainRequestBuilder(client, INSTANCE);
-    }
-
-    @Override
-    public MainResponse newResponse() {
-        return new MainResponse();
+        super(NAME, MainResponse::new);
     }
 }

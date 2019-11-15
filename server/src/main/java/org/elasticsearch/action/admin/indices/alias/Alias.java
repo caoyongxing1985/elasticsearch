@@ -26,9 +26,9 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.io.stream.Streamable;
+import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.xcontent.ToXContent;
-import org.elasticsearch.common.xcontent.ToXContentObject;
+import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentParser;
@@ -42,12 +42,13 @@ import java.util.Map;
 /**
  * Represents an alias, to be associated with an index
  */
-public class Alias implements Streamable, ToXContentObject {
+public class Alias implements Writeable, ToXContentFragment {
 
     private static final ParseField FILTER = new ParseField("filter");
     private static final ParseField ROUTING = new ParseField("routing");
     private static final ParseField INDEX_ROUTING = new ParseField("index_routing", "indexRouting", "index-routing");
     private static final ParseField SEARCH_ROUTING = new ParseField("search_routing", "searchRouting", "search-routing");
+    private static final ParseField IS_WRITE_INDEX = new ParseField("is_write_index");
 
     private String name;
 
@@ -60,8 +61,15 @@ public class Alias implements Streamable, ToXContentObject {
     @Nullable
     private String searchRouting;
 
-    private Alias() {
+    @Nullable
+    private Boolean writeIndex;
 
+    public Alias(StreamInput in) throws IOException {
+        name = in.readString();
+        filter = in.readOptionalString();
+        indexRouting = in.readOptionalString();
+        searchRouting = in.readOptionalString();
+        writeIndex = in.readOptionalBoolean();
     }
 
     public Alias(String name) {
@@ -167,20 +175,18 @@ public class Alias implements Streamable, ToXContentObject {
     }
 
     /**
-     * Allows to read an alias from the provided input stream
+     * @return the write index flag for the alias
      */
-    public static Alias read(StreamInput in) throws IOException {
-        Alias alias = new Alias();
-        alias.readFrom(in);
-        return alias;
+    public Boolean writeIndex() {
+        return writeIndex;
     }
 
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        name = in.readString();
-        filter = in.readOptionalString();
-        indexRouting = in.readOptionalString();
-        searchRouting = in.readOptionalString();
+    /**
+     *  Sets whether an alias is pointing to a write-index
+     */
+    public Alias writeIndex(@Nullable Boolean writeIndex) {
+        this.writeIndex = writeIndex;
+        return this;
     }
 
     @Override
@@ -189,6 +195,7 @@ public class Alias implements Streamable, ToXContentObject {
         out.writeOptionalString(filter);
         out.writeOptionalString(indexRouting);
         out.writeOptionalString(searchRouting);
+        out.writeOptionalBoolean(writeIndex);
     }
 
     /**
@@ -218,6 +225,10 @@ public class Alias implements Streamable, ToXContentObject {
                 } else if (SEARCH_ROUTING.match(currentFieldName, parser.getDeprecationHandler())) {
                     alias.searchRouting(parser.text());
                 }
+            } else if (token == XContentParser.Token.VALUE_BOOLEAN) {
+                if (IS_WRITE_INDEX.match(currentFieldName, parser.getDeprecationHandler())) {
+                    alias.writeIndex(parser.booleanValue());
+                }
             }
         }
         return alias;
@@ -244,8 +255,15 @@ public class Alias implements Streamable, ToXContentObject {
             }
         }
 
+        builder.field(IS_WRITE_INDEX.getPreferredName(), writeIndex);
+
         builder.endObject();
         return builder;
+    }
+
+    @Override
+    public String toString() {
+        return Strings.toString(this);
     }
 
     @Override

@@ -19,27 +19,14 @@
 
 package org.elasticsearch.action.admin.cluster.storedscripts;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class GetStoredScriptAction extends Action<GetStoredScriptRequest, GetStoredScriptResponse,
-        GetStoredScriptRequestBuilder> {
+public class GetStoredScriptAction extends ActionType<GetStoredScriptResponse> {
 
     public static final GetStoredScriptAction INSTANCE = new GetStoredScriptAction();
     public static final String NAME = "cluster:admin/script/get";
 
     private GetStoredScriptAction() {
-        super(NAME);
+        super(NAME, GetStoredScriptResponse::new);
     }
-
-    @Override
-    public GetStoredScriptResponse newResponse() {
-        return new GetStoredScriptResponse();
-    }
-
-    @Override
-    public GetStoredScriptRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new GetStoredScriptRequestBuilder(client, this);
-    }
-
 }

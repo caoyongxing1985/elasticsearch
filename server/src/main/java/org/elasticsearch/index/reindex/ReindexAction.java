@@ -19,24 +19,13 @@
 
 package org.elasticsearch.index.reindex;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class ReindexAction extends Action<ReindexRequest, BulkByScrollResponse, ReindexRequestBuilder> {
+public class ReindexAction extends ActionType<BulkByScrollResponse> {
     public static final ReindexAction INSTANCE = new ReindexAction();
     public static final String NAME = "indices:data/write/reindex";
 
     private ReindexAction() {
-        super(NAME);
-    }
-
-    @Override
-    public ReindexRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new ReindexRequestBuilder(client, this);
-    }
-
-    @Override
-    public BulkByScrollResponse newResponse() {
-        return new BulkByScrollResponse();
+        super(NAME, BulkByScrollResponse::new);
     }
 }

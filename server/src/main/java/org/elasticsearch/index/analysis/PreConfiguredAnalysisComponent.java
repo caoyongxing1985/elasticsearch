@@ -32,12 +32,17 @@ import java.io.IOException;
  * Shared implementation for pre-configured analysis components.
  */
 public abstract class PreConfiguredAnalysisComponent<T> implements AnalysisModule.AnalysisProvider<T> {
-    private final String name;
-    private final PreBuiltCacheFactory.PreBuiltCache<T> cache;
+    protected final String name;
+    protected final PreBuiltCacheFactory.PreBuiltCache<T> cache;
 
-    protected PreConfiguredAnalysisComponent(String name,  PreBuiltCacheFactory.CachingStrategy cache) {
+    protected PreConfiguredAnalysisComponent(String name, PreBuiltCacheFactory.CachingStrategy cache) {
         this.name = name;
         this.cache = PreBuiltCacheFactory.getCache(cache);
+    }
+
+    protected PreConfiguredAnalysisComponent(String name, PreBuiltCacheFactory.PreBuiltCache<T> cache) {
+        this.name = name;
+        this.cache = cache;
     }
 
     @Override

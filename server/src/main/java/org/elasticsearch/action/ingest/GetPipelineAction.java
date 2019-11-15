@@ -19,25 +19,14 @@
 
 package org.elasticsearch.action.ingest;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class GetPipelineAction extends Action<GetPipelineRequest, GetPipelineResponse, GetPipelineRequestBuilder> {
+public class GetPipelineAction extends ActionType<GetPipelineResponse> {
 
     public static final GetPipelineAction INSTANCE = new GetPipelineAction();
     public static final String NAME = "cluster:admin/ingest/pipeline/get";
 
     public GetPipelineAction() {
-        super(NAME);
-    }
-
-    @Override
-    public GetPipelineRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new GetPipelineRequestBuilder(client, this);
-    }
-
-    @Override
-    public GetPipelineResponse newResponse() {
-        return new GetPipelineResponse();
+        super(NAME, GetPipelineResponse::new);
     }
 }

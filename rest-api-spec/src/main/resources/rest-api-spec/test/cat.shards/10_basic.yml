@@ -1,9 +1,8 @@
 ---
 "Help":
   - skip:
-      version: " - 5.99.99"
-      reason: seq no stats were added in 6.0.0
-
+      version: " - 7.1.99"
+      reason:  external refresh stats were added in 7.2.0
   - do:
       cat.shards:
         help: true
@@ -55,6 +54,8 @@
                     merges.total_time                .+   \n
                     refresh.total                    .+   \n
                     refresh.time                     .+   \n
+                    refresh.external_total           .+   \n
+                    refresh.external_time            .+   \n
                     refresh.listeners                .+   \n
                     search.fetch_current             .+   \n
                     search.fetch_time                .+   \n
@@ -219,10 +220,6 @@
 
 ---
 "Test cat shards sort":
-  - skip:
-      version: " - 5.0.99"
-      reason:  sorting was introduced in 5.1.0
-
   - do:
       indices.create:
         index: foo
@@ -242,7 +239,6 @@
   - do:
       index:
         index: bar
-        type: type
         body: { test: bar }
         refresh: true
 

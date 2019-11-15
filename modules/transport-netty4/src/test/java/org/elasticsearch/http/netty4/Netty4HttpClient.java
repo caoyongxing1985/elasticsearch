@@ -25,10 +25,10 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
-import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.http.DefaultFullHttpRequest;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.FullHttpResponse;
@@ -44,6 +44,8 @@ import io.netty.handler.codec.http.HttpVersion;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.tasks.Task;
+import org.elasticsearch.transport.NettyAllocator;
 
 import java.io.Closeable;
 import java.net.SocketAddress;
@@ -57,6 +59,7 @@ import java.util.concurrent.TimeUnit;
 
 import static io.netty.handler.codec.http.HttpHeaderNames.HOST;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
+import static org.junit.Assert.fail;
 
 /**
  * Tiny helper to send http requests over netty.
@@ -74,7 +77,7 @@ class Netty4HttpClient implements Closeable {
     static Collection<String> returnOpaqueIds(Collection<FullHttpResponse> responses) {
         List<String> list = new ArrayList<>(responses.size());
         for (HttpResponse response : responses) {
-            list.add(response.headers().get("X-Opaque-Id"));
+            list.add(response.headers().get(Task.X_OPAQUE_ID));
         }
         return list;
     }
@@ -82,7 +85,10 @@ class Netty4HttpClient implements Closeable {
     private final Bootstrap clientBootstrap;
 
     Netty4HttpClient() {
-        clientBootstrap = new Bootstrap().channel(NioSocketChannel.class).group(new NioEventLoopGroup());
+        clientBootstrap = new Bootstrap()
+            .channel(NettyAllocator.getChannelType())
+            .option(ChannelOption.ALLOCATOR, NettyAllocator.getAllocator())
+            .group(new NioEventLoopGroup(1));
     }
 
     public Collection<FullHttpResponse> get(SocketAddress remoteAddress, String... uris) throws InterruptedException {
@@ -144,7 +150,9 @@ class Netty4HttpClient implements Closeable {
             for (HttpRequest request : requests) {
                 channelFuture.channel().writeAndFlush(request);
             }
-            latch.await(30, TimeUnit.SECONDS);
+            if (latch.await(30L, TimeUnit.SECONDS) == false) {
+                fail("Failed to get all expected responses.");
+            }
 
         } finally {
             if (channelFuture != null) {

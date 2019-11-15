@@ -18,6 +18,7 @@
  */
 package org.elasticsearch.repositories.blobstore;
 
+import org.apache.lucene.util.SetOnce;
 import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotRequestBuilder;
 import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotResponse;
 import org.elasticsearch.action.admin.cluster.snapshots.restore.RestoreSnapshotRequestBuilder;
@@ -25,45 +26,81 @@ import org.elasticsearch.action.admin.cluster.snapshots.restore.RestoreSnapshotR
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.blobstore.BlobContainer;
+import org.elasticsearch.common.blobstore.BlobStore;
+import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.repositories.IndexId;
 import org.elasticsearch.repositories.RepositoriesService;
 import org.elasticsearch.repositories.RepositoryData;
+import org.elasticsearch.snapshots.SnapshotMissingException;
+import org.elasticsearch.snapshots.SnapshotRestoreException;
 import org.elasticsearch.test.ESIntegTestCase;
+import org.elasticsearch.threadpool.ThreadPool;
 
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.instanceOf;
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.nullValue;
 
 /**
- * Basic integration tests for blob-based repository validation.
+ * Integration tests for {@link BlobStoreRepository} implementations.
  */
 public abstract class ESBlobStoreRepositoryIntegTestCase extends ESIntegTestCase {
 
-    protected abstract void createTestRepository(String name);
+    protected abstract String repositoryType();
+
+    protected Settings repositorySettings() {
+        return Settings.builder().put("compress", randomBoolean()).build();
+    }
+
+    protected final String createRepository(final String name) {
+        return createRepository(name, repositorySettings());
+    }
+
+    protected final String createRepository(final String name, final Settings settings) {
+        final boolean verify = randomBoolean();
+
+        logger.debug("-->  creating repository [name: {}, verify: {}, settings: {}]", name, verify, settings);
+        assertAcked(client().admin().cluster().preparePutRepository(name)
+            .setType(repositoryType())
+            .setVerify(verify)
+            .setSettings(settings));
+
+        internalCluster().getDataOrMasterNodeInstances(RepositoriesService.class).forEach(repositories -> {
+            assertThat(repositories.repository(name), notNullValue());
+            assertThat(repositories.repository(name), instanceOf(BlobStoreRepository.class));
+            assertThat(repositories.repository(name).isReadOnly(), is(false));
+            BlobStore blobStore = ((BlobStoreRepository) repositories.repository(name)).getBlobStore();
+            assertThat("blob store has to be lazy initialized", blobStore, verify ? is(notNullValue()) : is(nullValue()));
+        });
+
+        return name;
+    }
 
     public void testSnapshotAndRestore() throws Exception {
-        String repoName = randomAsciiName();
-        logger.info("-->  creating repository {}", repoName);
-        createTestRepository(repoName);
+        final String repoName = createRepository(randomName());
         int indexCount = randomIntBetween(1, 5);
         int[] docCounts = new int[indexCount];
         String[] indexNames = generateRandomNames(indexCount);
         for (int i = 0; i < indexCount; i++) {
-            logger.info("-->  create random index {} with {} records", indexNames[i], docCounts[i]);
             docCounts[i] = iterations(10, 1000);
+            logger.info("-->  create random index {} with {} records", indexNames[i], docCounts[i]);
             addRandomDocuments(indexNames[i], docCounts[i]);
             assertHitCount(client().prepareSearch(indexNames[i]).setSize(0).get(), docCounts[i]);
         }
 
-        String snapshotName = randomAsciiName();
+        final String snapshotName = randomName();
         logger.info("-->  create snapshot {}:{}", repoName, snapshotName);
         assertSuccessfulSnapshot(client().admin().cluster().prepareCreateSnapshot(repoName, snapshotName)
                 .setWaitForCompletion(true).setIndices(indexNames));
@@ -83,17 +120,19 @@ public abstract class ESBlobStoreRepositoryIntegTestCase extends ESIntegTestCase
                     logger.info("--> add random documents to {}", index);
                     addRandomDocuments(index, randomIntBetween(10, 1000));
                 } else {
-                    int docCount = (int) client().prepareSearch(index).setSize(0).get().getHits().getTotalHits();
+                    int docCount = (int) client().prepareSearch(index).setSize(0).get().getHits().getTotalHits().value;
                     int deleteCount = randomIntBetween(1, docCount);
                     logger.info("--> delete {} random documents from {}", deleteCount, index);
                     for (int i = 0; i < deleteCount; i++) {
                         int doc = randomIntBetween(0, docCount - 1);
-                        client().prepareDelete(index, index, Integer.toString(doc)).get();
+                        client().prepareDelete(index, Integer.toString(doc)).get();
                     }
                     client().admin().indices().prepareRefresh(index).get();
                 }
             }
 
+            // Wait for green so the close does not fail in the edge case of coinciding with a shard recovery that hasn't fully synced yet
+            ensureGreen();
             logger.info("-->  close indices {}", closeIndices);
             assertAcked(client().admin().indices().prepareClose(closeIndices.toArray(new String[closeIndices.size()])));
         }
@@ -109,16 +148,23 @@ public abstract class ESBlobStoreRepositoryIntegTestCase extends ESIntegTestCase
 
         logger.info("-->  delete snapshot {}:{}", repoName, snapshotName);
         assertAcked(client().admin().cluster().prepareDeleteSnapshot(repoName, snapshotName).get());
+
+        expectThrows(SnapshotMissingException.class, () ->
+            client().admin().cluster().prepareGetSnapshots(repoName).setSnapshots(snapshotName).get().getSnapshots(repoName));
+
+        expectThrows(SnapshotMissingException.class, () ->
+            client().admin().cluster().prepareDeleteSnapshot(repoName, snapshotName).get());
+
+        expectThrows(SnapshotRestoreException.class, () ->
+            client().admin().cluster().prepareRestoreSnapshot(repoName, snapshotName).setWaitForCompletion(randomBoolean()).get());
     }
 
     public void testMultipleSnapshotAndRollback() throws Exception {
-        String repoName = randomAsciiName();
-        logger.info("-->  creating repository {}", repoName);
-        createTestRepository(repoName);
+        final String repoName = createRepository(randomName());
         int iterationCount = randomIntBetween(2, 5);
         int[] docCounts = new int[iterationCount];
-        String indexName = randomAsciiName();
-        String snapshotName = randomAsciiName();
+        String indexName = randomName();
+        String snapshotName = randomName();
         assertAcked(client().admin().indices().prepareCreate(indexName).get());
         for (int i = 0; i < iterationCount; i++) {
             if (randomBoolean() && i > 0) { // don't delete on the first iteration
@@ -128,7 +174,7 @@ public abstract class ESBlobStoreRepositoryIntegTestCase extends ESIntegTestCase
                     logger.info("--> delete {} random documents from {}", deleteCount, indexName);
                     for (int j = 0; j < deleteCount; j++) {
                         int doc = randomIntBetween(0, docCount - 1);
-                        client().prepareDelete(indexName, indexName, Integer.toString(doc)).get();
+                        client().prepareDelete(indexName, Integer.toString(doc)).get();
                     }
                     client().admin().indices().prepareRefresh(indexName).get();
                 }
@@ -138,7 +184,7 @@ public abstract class ESBlobStoreRepositoryIntegTestCase extends ESIntegTestCase
                 addRandomDocuments(indexName, docCount);
             }
             // Check number of documents in this iteration
-            docCounts[i] = (int) client().prepareSearch(indexName).setSize(0).get().getHits().getTotalHits();
+            docCounts[i] = (int) client().prepareSearch(indexName).setSize(0).get().getHits().getTotalHits().value;
             logger.info("-->  create snapshot {}:{} with {} documents", repoName, snapshotName + "-" + i, docCounts[i]);
             assertSuccessfulSnapshot(client().admin().cluster().prepareCreateSnapshot(repoName, snapshotName + "-" + i)
                     .setWaitForCompletion(true).setIndices(indexName));
@@ -149,6 +195,8 @@ public abstract class ESBlobStoreRepositoryIntegTestCase extends ESIntegTestCase
             int iterationToRestore = randomIntBetween(0, iterationCount - 1);
             logger.info("-->  performing restore of the iteration {}", iterationToRestore);
 
+            // Wait for green so the close does not fail in the edge case of coinciding with a shard recovery that hasn't fully synced yet
+            ensureGreen();
             logger.info("-->  close index");
             assertAcked(client().admin().indices().prepareClose(indexName));
 
@@ -167,20 +215,16 @@ public abstract class ESBlobStoreRepositoryIntegTestCase extends ESIntegTestCase
     }
 
     public void testIndicesDeletedFromRepository() throws Exception {
+        final String repoName = createRepository("test-repo");
         Client client = client();
-
-        logger.info("-->  creating repository");
-        final String repoName = "test-repo";
-        createTestRepository(repoName);
-
         createIndex("test-idx-1", "test-idx-2", "test-idx-3");
         ensureGreen();
 
         logger.info("--> indexing some data");
         for (int i = 0; i < 20; i++) {
-            index("test-idx-1", "doc", Integer.toString(i), "foo", "bar" + i);
-            index("test-idx-2", "doc", Integer.toString(i), "foo", "baz" + i);
-            index("test-idx-3", "doc", Integer.toString(i), "foo", "baz" + i);
+            indexDoc("test-idx-1", Integer.toString(i), "foo", "bar" + i);
+            indexDoc("test-idx-2", Integer.toString(i), "foo", "baz" + i);
+            indexDoc("test-idx-3", Integer.toString(i), "foo", "baz" + i);
         }
         refresh();
 
@@ -191,9 +235,9 @@ public abstract class ESBlobStoreRepositoryIntegTestCase extends ESIntegTestCase
 
         logger.info("--> indexing more data");
         for (int i = 20; i < 40; i++) {
-            index("test-idx-1", "doc", Integer.toString(i), "foo", "bar" + i);
-            index("test-idx-2", "doc", Integer.toString(i), "foo", "baz" + i);
-            index("test-idx-3", "doc", Integer.toString(i), "foo", "baz" + i);
+            indexDoc("test-idx-1", Integer.toString(i), "foo", "bar" + i);
+            indexDoc("test-idx-2", Integer.toString(i), "foo", "baz" + i);
+            indexDoc("test-idx-3", Integer.toString(i), "foo", "baz" + i);
         }
 
         logger.info("--> take another snapshot with only 2 of the 3 indices");
@@ -208,12 +252,22 @@ public abstract class ESBlobStoreRepositoryIntegTestCase extends ESIntegTestCase
 
         logger.info("--> verify index folder deleted from blob container");
         RepositoriesService repositoriesSvc = internalCluster().getInstance(RepositoriesService.class, internalCluster().getMasterName());
-        @SuppressWarnings("unchecked") BlobStoreRepository repository = (BlobStoreRepository) repositoriesSvc.repository(repoName);
-        BlobContainer indicesBlobContainer = repository.blobStore().blobContainer(repository.basePath().add("indices"));
-        RepositoryData repositoryData = repository.getRepositoryData();
-        for (IndexId indexId : repositoryData.getIndices().values()) {
+        ThreadPool threadPool = internalCluster().getInstance(ThreadPool.class, internalCluster().getMasterName());
+        BlobStoreRepository repository = (BlobStoreRepository) repositoriesSvc.repository(repoName);
+
+        final SetOnce<BlobContainer> indicesBlobContainer = new SetOnce<>();
+        final SetOnce<RepositoryData> repositoryData = new SetOnce<>();
+        final CountDownLatch latch = new CountDownLatch(1);
+        threadPool.executor(ThreadPool.Names.SNAPSHOT).execute(() -> {
+            indicesBlobContainer.set(repository.blobStore().blobContainer(repository.basePath().add("indices")));
+            repositoryData.set(repository.getRepositoryData());
+            latch.countDown();
+        });
+
+        latch.await();
+        for (IndexId indexId : repositoryData.get().getIndices().values()) {
             if (indexId.getName().equals("test-idx-3")) {
-                assertFalse(indicesBlobContainer.blobExists(indexId.getId())); // deleted index
+                assertFalse(BlobStoreTestUtil.blobExists(indicesBlobContainer.get(), indexId.getId())); // deleted index
             }
         }
     }
@@ -221,47 +275,45 @@ public abstract class ESBlobStoreRepositoryIntegTestCase extends ESIntegTestCase
     protected void addRandomDocuments(String name, int numDocs) throws ExecutionException, InterruptedException {
         IndexRequestBuilder[] indexRequestBuilders = new IndexRequestBuilder[numDocs];
         for (int i = 0; i < numDocs; i++) {
-            indexRequestBuilders[i] = client().prepareIndex(name, name, Integer.toString(i))
+            indexRequestBuilders[i] = client().prepareIndex(name).setId(Integer.toString(i))
                 .setRouting(randomAlphaOfLength(randomIntBetween(1, 10))).setSource("field", "value");
         }
         indexRandom(true, indexRequestBuilders);
     }
 
-    protected String[] generateRandomNames(int num) {
+    private String[] generateRandomNames(int num) {
         Set<String> names = new HashSet<>();
         for (int i = 0; i < num; i++) {
             String name;
             do {
-                name = randomAsciiName();
+                name = randomName();
             } while (names.contains(name));
             names.add(name);
         }
         return names.toArray(new String[num]);
     }
 
-    public static CreateSnapshotResponse assertSuccessfulSnapshot(CreateSnapshotRequestBuilder requestBuilder) {
+    protected static void assertSuccessfulSnapshot(CreateSnapshotRequestBuilder requestBuilder) {
         CreateSnapshotResponse response = requestBuilder.get();
         assertSuccessfulSnapshot(response);
-        return response;
     }
 
-    public static void assertSuccessfulSnapshot(CreateSnapshotResponse response) {
+    private static void assertSuccessfulSnapshot(CreateSnapshotResponse response) {
         assertThat(response.getSnapshotInfo().successfulShards(), greaterThan(0));
         assertThat(response.getSnapshotInfo().successfulShards(), equalTo(response.getSnapshotInfo().totalShards()));
     }
 
-    public static RestoreSnapshotResponse assertSuccessfulRestore(RestoreSnapshotRequestBuilder requestBuilder) {
+    protected static void assertSuccessfulRestore(RestoreSnapshotRequestBuilder requestBuilder) {
         RestoreSnapshotResponse response = requestBuilder.get();
         assertSuccessfulRestore(response);
-        return response;
     }
 
-    public static void assertSuccessfulRestore(RestoreSnapshotResponse response) {
+    private static void assertSuccessfulRestore(RestoreSnapshotResponse response) {
         assertThat(response.getRestoreInfo().successfulShards(), greaterThan(0));
         assertThat(response.getRestoreInfo().successfulShards(), equalTo(response.getRestoreInfo().totalShards()));
     }
 
-    public static String randomAsciiName() {
+    protected static String randomName() {
         return randomAlphaOfLength(randomIntBetween(1, 10)).toLowerCase(Locale.ROOT);
     }
 }

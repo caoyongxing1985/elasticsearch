@@ -20,15 +20,21 @@
 package org.elasticsearch.action.admin.cluster.snapshots.status;
 
 import org.elasticsearch.Version;
+import org.elasticsearch.cluster.SnapshotsInProgress;
 import org.elasticsearch.cluster.SnapshotsInProgress.State;
-import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.ParseField;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.io.stream.Streamable;
+import org.elasticsearch.common.io.stream.Writeable;
+import org.elasticsearch.common.xcontent.ConstructingObjectParser;
+import org.elasticsearch.common.xcontent.ObjectParser;
 import org.elasticsearch.common.xcontent.ToXContentObject;
 import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.snapshots.Snapshot;
+import org.elasticsearch.snapshots.SnapshotId;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -40,12 +46,16 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
 import static java.util.Collections.unmodifiableMap;
+import static org.elasticsearch.common.xcontent.ConstructingObjectParser.constructorArg;
+import static org.elasticsearch.common.xcontent.ConstructingObjectParser.optionalConstructorArg;
 
 /**
  * Status of a snapshot
  */
-public class SnapshotStatus implements ToXContentObject, Streamable {
+public class SnapshotStatus implements ToXContentObject, Writeable {
 
     private Snapshot snapshot;
 
@@ -62,17 +72,49 @@ public class SnapshotStatus implements ToXContentObject, Streamable {
     @Nullable
     private Boolean includeGlobalState;
 
-    SnapshotStatus(final Snapshot snapshot, final State state, final List<SnapshotIndexShardStatus> shards,
-                   final Boolean includeGlobalState) {
+    SnapshotStatus(StreamInput in) throws IOException {
+        snapshot = new Snapshot(in);
+        state = State.fromValue(in.readByte());
+        int size = in.readVInt();
+        List<SnapshotIndexShardStatus> builder = new ArrayList<>();
+        for (int i = 0; i < size; i++) {
+            builder.add(new SnapshotIndexShardStatus(in));
+        }
+        shards = Collections.unmodifiableList(builder);
+        includeGlobalState = in.readOptionalBoolean();
+        final long startTime;
+        final long time;
+        if (in.getVersion().onOrAfter(Version.V_7_4_0)) {
+            startTime = in.readLong();
+            time = in.readLong();
+        } else {
+            startTime = 0L;
+            time = 0L;
+        }
+        updateShardStats(startTime, time);
+    }
+
+    SnapshotStatus(Snapshot snapshot, State state, List<SnapshotIndexShardStatus> shards, Boolean includeGlobalState,
+                   long startTime, long time) {
         this.snapshot = Objects.requireNonNull(snapshot);
         this.state = Objects.requireNonNull(state);
         this.shards = Objects.requireNonNull(shards);
         this.includeGlobalState = includeGlobalState;
         shardsStats = new SnapshotShardsStats(shards);
-        updateShardStats();
+        assert time >= 0 : "time must be >= 0 but received [" + time + "]";
+        updateShardStats(startTime, time);
     }
 
-    SnapshotStatus() {
+    private SnapshotStatus(Snapshot snapshot, State state, List<SnapshotIndexShardStatus> shards,
+                          Map<String, SnapshotIndexStatus> indicesStatus, SnapshotShardsStats shardsStats,
+                          SnapshotStats stats, Boolean includeGlobalState) {
+        this.snapshot = snapshot;
+        this.state = state;
+        this.shards = shards;
+        this.indicesStatus = indicesStatus;
+        this.shardsStats = shardsStats;
+        this.stats = stats;
+        this.includeGlobalState = includeGlobalState;
     }
 
     /**
@@ -138,22 +180,6 @@ public class SnapshotStatus implements ToXContentObject, Streamable {
     }
 
     @Override
-    public void readFrom(StreamInput in) throws IOException {
-        snapshot = new Snapshot(in);
-        state = State.fromValue(in.readByte());
-        int size = in.readVInt();
-        List<SnapshotIndexShardStatus> builder = new ArrayList<>();
-        for (int i = 0; i < size; i++) {
-            builder.add(SnapshotIndexShardStatus.readShardSnapshotStatus(in));
-        }
-        shards = Collections.unmodifiableList(builder);
-        if (in.getVersion().onOrAfter(Version.V_6_2_0)) {
-            includeGlobalState = in.readOptionalBoolean();
-        }
-        updateShardStats();
-    }
-
-    @Override
     public void writeTo(StreamOutput out) throws IOException {
         snapshot.writeTo(out);
         out.writeByte(state.value());
@@ -161,21 +187,11 @@ public class SnapshotStatus implements ToXContentObject, Streamable {
         for (SnapshotIndexShardStatus shard : shards) {
             shard.writeTo(out);
         }
-        if (out.getVersion().onOrAfter(Version.V_6_2_0)) {
-            out.writeOptionalBoolean(includeGlobalState);
+        out.writeOptionalBoolean(includeGlobalState);
+        if (out.getVersion().onOrAfter(Version.V_7_4_0)) {
+            out.writeLong(stats.getStartTime());
+            out.writeLong(stats.getTime());
         }
-    }
-
-    /**
-     * Reads snapshot status from stream input
-     *
-     * @param in stream input
-     * @return deserialized snapshot status
-     */
-    public static SnapshotStatus readSnapshotStatus(StreamInput in) throws IOException {
-        SnapshotStatus snapshotInfo = new SnapshotStatus();
-        snapshotInfo.readFrom(in);
-        return snapshotInfo;
     }
 
     @Override
@@ -207,8 +223,8 @@ public class SnapshotStatus implements ToXContentObject, Streamable {
         if (includeGlobalState != null) {
             builder.field(INCLUDE_GLOBAL_STATE, includeGlobalState);
         }
-        shardsStats.toXContent(builder, params);
-        stats.toXContent(builder, params);
+        builder.field(SnapshotShardsStats.Fields.SHARDS_STATS, shardsStats, params);
+        builder.field(SnapshotStats.Fields.STATS, stats, params);
         builder.startObject(INDICES);
         for (SnapshotIndexStatus indexStatus : getIndices().values()) {
             indexStatus.toXContent(builder, params);
@@ -218,11 +234,85 @@ public class SnapshotStatus implements ToXContentObject, Streamable {
         return builder;
     }
 
-    private void updateShardStats() {
-        stats = new SnapshotStats();
+    static final ConstructingObjectParser<SnapshotStatus, Void> PARSER = new ConstructingObjectParser<>(
+        "snapshot_status", true,
+        (Object[] parsedObjects) -> {
+            int i = 0;
+            String name = (String) parsedObjects[i++];
+            String repository = (String) parsedObjects[i++];
+            String uuid = (String) parsedObjects[i++];
+            String rawState = (String) parsedObjects[i++];
+            Boolean includeGlobalState = (Boolean) parsedObjects[i++];
+            SnapshotStats stats = ((SnapshotStats) parsedObjects[i++]);
+            SnapshotShardsStats shardsStats = ((SnapshotShardsStats) parsedObjects[i++]);
+            @SuppressWarnings("unchecked") List<SnapshotIndexStatus> indices = ((List<SnapshotIndexStatus>) parsedObjects[i]);
+
+            Snapshot snapshot = new Snapshot(repository, new SnapshotId(name, uuid));
+            SnapshotsInProgress.State state = SnapshotsInProgress.State.valueOf(rawState);
+            Map<String, SnapshotIndexStatus> indicesStatus;
+            List<SnapshotIndexShardStatus> shards;
+            if (indices == null || indices.isEmpty()) {
+                indicesStatus = emptyMap();
+                shards = emptyList();
+            } else {
+                indicesStatus = new HashMap<>(indices.size());
+                shards = new ArrayList<>();
+                for (SnapshotIndexStatus index : indices) {
+                    indicesStatus.put(index.getIndex(), index);
+                    shards.addAll(index.getShards().values());
+                }
+            }
+            return new SnapshotStatus(snapshot, state, shards, indicesStatus, shardsStats, stats, includeGlobalState);
+        });
+    static {
+        PARSER.declareString(constructorArg(), new ParseField(SNAPSHOT));
+        PARSER.declareString(constructorArg(), new ParseField(REPOSITORY));
+        PARSER.declareString(constructorArg(), new ParseField(UUID));
+        PARSER.declareString(constructorArg(), new ParseField(STATE));
+        PARSER.declareBoolean(optionalConstructorArg(), new ParseField(INCLUDE_GLOBAL_STATE));
+        PARSER.declareField(constructorArg(), SnapshotStats::fromXContent, new ParseField(SnapshotStats.Fields.STATS),
+            ObjectParser.ValueType.OBJECT);
+        PARSER.declareObject(constructorArg(), SnapshotShardsStats.PARSER, new ParseField(SnapshotShardsStats.Fields.SHARDS_STATS));
+        PARSER.declareNamedObjects(constructorArg(), SnapshotIndexStatus.PARSER, new ParseField(INDICES));
+    }
+
+    public static SnapshotStatus fromXContent(XContentParser parser) throws IOException {
+        return PARSER.parse(parser, null);
+    }
+
+    private void updateShardStats(long startTime, long time) {
+        stats = new SnapshotStats(startTime, time, 0, 0, 0, 0, 0, 0);
         shardsStats = new SnapshotShardsStats(shards);
         for (SnapshotIndexShardStatus shard : shards) {
-            stats.add(shard.getStats());
+            // BWC: only update timestamps when we did not get a start time from an old node
+            stats.add(shard.getStats(), startTime == 0L);
         }
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+
+        SnapshotStatus that = (SnapshotStatus) o;
+
+        if (snapshot != null ? !snapshot.equals(that.snapshot) : that.snapshot != null) return false;
+        if (state != that.state) return false;
+        if (indicesStatus != null ? !indicesStatus.equals(that.indicesStatus) : that.indicesStatus != null)
+            return false;
+        if (shardsStats != null ? !shardsStats.equals(that.shardsStats) : that.shardsStats != null) return false;
+        if (stats != null ? !stats.equals(that.stats) : that.stats != null) return false;
+        return includeGlobalState != null ? includeGlobalState.equals(that.includeGlobalState) : that.includeGlobalState == null;
+    }
+
+    @Override
+    public int hashCode() {
+        int result = snapshot != null ? snapshot.hashCode() : 0;
+        result = 31 * result + (state != null ? state.hashCode() : 0);
+        result = 31 * result + (indicesStatus != null ? indicesStatus.hashCode() : 0);
+        result = 31 * result + (shardsStats != null ? shardsStats.hashCode() : 0);
+        result = 31 * result + (stats != null ? stats.hashCode() : 0);
+        result = 31 * result + (includeGlobalState != null ? includeGlobalState.hashCode() : 0);
+        return result;
     }
 }

@@ -19,25 +19,15 @@
 
 package org.elasticsearch.action.admin.indices.open;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class OpenIndexAction extends Action<OpenIndexRequest, OpenIndexResponse, OpenIndexRequestBuilder> {
+public class OpenIndexAction extends ActionType<OpenIndexResponse> {
 
     public static final OpenIndexAction INSTANCE = new OpenIndexAction();
     public static final String NAME = "indices:admin/open";
 
     private OpenIndexAction() {
-        super(NAME);
+        super(NAME, OpenIndexResponse::new);
     }
 
-    @Override
-    public OpenIndexResponse newResponse() {
-        return new OpenIndexResponse();
-    }
-
-    @Override
-    public OpenIndexRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new OpenIndexRequestBuilder(client, this);
-    }
 }

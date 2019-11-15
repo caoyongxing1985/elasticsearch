@@ -26,7 +26,6 @@ import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.SetOnce;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.get.GetRequest;
-import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.ParsingException;
 import org.elasticsearch.common.Strings;
@@ -391,9 +390,12 @@ public class TermsQueryBuilder extends AbstractQueryBuilder<TermsQueryBuilder> {
             throw new ParsingException(parser.getTokenLocation(), "[" + TermsQueryBuilder.NAME + "] query requires a field name, " +
                     "followed by array of terms or a document lookup specification");
         }
-        return new TermsQueryBuilder(fieldName, values, termsLookup)
-                .boost(boost)
-                .queryName(queryName);
+
+        TermsQueryBuilder builder = new TermsQueryBuilder(fieldName, values, termsLookup)
+            .boost(boost)
+            .queryName(queryName);
+
+        return builder;
     }
 
     static List<Object> parseValues(XContentParser parser) throws IOException {
@@ -442,24 +444,16 @@ public class TermsQueryBuilder extends AbstractQueryBuilder<TermsQueryBuilder> {
     }
 
     private void fetch(TermsLookup termsLookup, Client client, ActionListener<List<Object>> actionListener) {
-        GetRequest getRequest = new GetRequest(termsLookup.index(), termsLookup.type(), termsLookup.id())
-            .preference("_local").routing(termsLookup.routing());
-        client.get(getRequest, new ActionListener<GetResponse>() {
-            @Override
-            public void onResponse(GetResponse getResponse) {
-                List<Object> terms = new ArrayList<>();
-                if (getResponse.isSourceEmpty() == false) { // extract terms only if the doc source exists
-                    List<Object> extractedValues = XContentMapValues.extractRawValues(termsLookup.path(), getResponse.getSourceAsMap());
-                    terms.addAll(extractedValues);
-                }
-                actionListener.onResponse(terms);
+        GetRequest getRequest = new GetRequest(termsLookup.index(), termsLookup.id());
+        getRequest.preference("_local").routing(termsLookup.routing());
+        client.get(getRequest, ActionListener.delegateFailure(actionListener, (delegatedListener, getResponse) -> {
+            List<Object> terms = new ArrayList<>();
+            if (getResponse.isSourceEmpty() == false) { // extract terms only if the doc source exists
+                List<Object> extractedValues = XContentMapValues.extractRawValues(termsLookup.path(), getResponse.getSourceAsMap());
+                terms.addAll(extractedValues);
             }
-
-            @Override
-            public void onFailure(Exception e) {
-                actionListener.onFailure(e);
-            }
-        });
+            delegatedListener.onResponse(terms);
+        }));
     }
 
     @Override
@@ -481,13 +475,11 @@ public class TermsQueryBuilder extends AbstractQueryBuilder<TermsQueryBuilder> {
             return supplier.get() == null ? this : new TermsQueryBuilder(this.fieldName, supplier.get());
         } else if (this.termsLookup != null) {
             SetOnce<List<?>> supplier = new SetOnce<>();
-            queryRewriteContext.registerAsyncAction((client, listener) -> {
-                fetch(termsLookup, client, ActionListener.wrap(list -> {
-                    supplier.set(list);
-                    listener.onResponse(null);
-                }, listener::onFailure));
-
-            });
+            queryRewriteContext.registerAsyncAction((client, listener) ->
+                fetch(termsLookup, client, ActionListener.map(listener, list -> {
+                supplier.set(list);
+                return null;
+            })));
             return new TermsQueryBuilder(this.fieldName, supplier::get);
         }
         return this;

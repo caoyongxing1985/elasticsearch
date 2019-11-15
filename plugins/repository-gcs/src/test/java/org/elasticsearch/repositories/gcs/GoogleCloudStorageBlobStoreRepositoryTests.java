@@ -19,75 +19,86 @@
 
 package org.elasticsearch.repositories.gcs;
 
-import com.google.api.services.storage.Storage;
+import com.google.api.gax.retrying.RetrySettings;
+import com.google.cloud.http.HttpTransportOptions;
+import com.google.cloud.storage.StorageOptions;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import fixture.gcs.FakeOAuth2HttpHandler;
+import fixture.gcs.GoogleCloudStorageHttpHandler;
 import org.elasticsearch.cluster.metadata.RepositoryMetaData;
+import org.elasticsearch.common.SuppressForbidden;
+import org.elasticsearch.common.io.Streams;
+import org.elasticsearch.common.settings.MockSecureSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.plugins.Plugin;
-import org.elasticsearch.repositories.blobstore.ESBlobStoreRepositoryIntegTestCase;
-import org.junit.AfterClass;
+import org.elasticsearch.repositories.Repository;
+import org.elasticsearch.repositories.blobstore.ESMockAPIBasedRepositoryIntegTestCase;
+import org.elasticsearch.threadpool.ThreadPool;
+import org.threeten.bp.Duration;
 
+import java.io.IOException;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
-import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
+import static org.elasticsearch.repositories.gcs.GoogleCloudStorageClientSettings.CREDENTIALS_FILE_SETTING;
+import static org.elasticsearch.repositories.gcs.GoogleCloudStorageClientSettings.ENDPOINT_SETTING;
+import static org.elasticsearch.repositories.gcs.GoogleCloudStorageClientSettings.TOKEN_URI_SETTING;
+import static org.elasticsearch.repositories.gcs.GoogleCloudStorageRepository.BUCKET;
+import static org.elasticsearch.repositories.gcs.GoogleCloudStorageRepository.CLIENT_NAME;
 
-public class GoogleCloudStorageBlobStoreRepositoryTests extends ESBlobStoreRepositoryIntegTestCase {
+@SuppressForbidden(reason = "this test uses a HttpServer to emulate a Google Cloud Storage endpoint")
+public class GoogleCloudStorageBlobStoreRepositoryTests extends ESMockAPIBasedRepositoryIntegTestCase {
 
-    private static final String BUCKET = "gcs-repository-test";
+    @Override
+    protected String repositoryType() {
+        return GoogleCloudStorageRepository.TYPE;
+    }
 
-    // Static list of blobs shared among all nodes in order to act like a remote repository service:
-    // all nodes must see the same content
-    private static final ConcurrentMap<String, byte[]> blobs = new ConcurrentHashMap<>();
+    @Override
+    protected Settings repositorySettings() {
+        return Settings.builder()
+            .put(super.repositorySettings())
+            .put(BUCKET.getKey(), "bucket")
+            .put(CLIENT_NAME.getKey(), "test")
+            .build();
+    }
 
     @Override
     protected Collection<Class<? extends Plugin>> nodePlugins() {
-        return Collections.singletonList(MockGoogleCloudStoragePlugin.class);
+        return Collections.singletonList(TestGoogleCloudStoragePlugin.class);
     }
 
     @Override
-    protected void createTestRepository(String name) {
-        assertAcked(client().admin().cluster().preparePutRepository(name)
-                .setType(GoogleCloudStorageRepository.TYPE)
-                .setSettings(Settings.builder()
-                        .put("bucket", BUCKET)
-                        .put("base_path", GoogleCloudStorageBlobStoreRepositoryTests.class.getSimpleName())
-                        .put("compress", randomBoolean())
-                        .put("chunk_size", randomIntBetween(100, 1000), ByteSizeUnit.BYTES)));
+    protected Map<String, HttpHandler> createHttpHandlers() {
+        return Map.of(
+            "/", new GoogleCloudStorageHttpHandler("bucket"),
+            "/token", new FakeOAuth2HttpHandler()
+        );
     }
 
-    @AfterClass
-    public static void wipeRepository() {
-        blobs.clear();
+    @Override
+    protected HttpHandler createErroneousHttpHandler(final HttpHandler delegate) {
+        return new GoogleErroneousHttpHandler(delegate, randomIntBetween(2, 3));
     }
 
-    public static class MockGoogleCloudStoragePlugin extends GoogleCloudStoragePlugin {
+    @Override
+    protected Settings nodeSettings(int nodeOrdinal) {
+        final Settings.Builder settings = Settings.builder();
+        settings.put(super.nodeSettings(nodeOrdinal));
+        settings.put(ENDPOINT_SETTING.getConcreteSettingForNamespace("test").getKey(), httpServerUrl());
+        settings.put(TOKEN_URI_SETTING.getConcreteSettingForNamespace("test").getKey(), httpServerUrl() + "/token");
 
-        public MockGoogleCloudStoragePlugin(final Settings settings) {
-            super(settings);
-        }
-
-        @Override
-        protected GoogleCloudStorageService createStorageService(Environment environment) {
-            return new MockGoogleCloudStorageService(environment, getClientsSettings());
-        }
-    }
-
-    public static class MockGoogleCloudStorageService extends GoogleCloudStorageService {
-
-        MockGoogleCloudStorageService(Environment environment, Map<String, GoogleCloudStorageClientSettings> clientsSettings) {
-            super(environment, clientsSettings);
-        }
-
-        @Override
-        public Storage createClient(String clientName) {
-            return new MockStorage(BUCKET, blobs);
-        }
+        final MockSecureSettings secureSettings = new MockSecureSettings();
+        final byte[] serviceAccount = TestUtils.createServiceAccount(random());
+        secureSettings.setFile(CREDENTIALS_FILE_SETTING.getConcreteSettingForNamespace("test").getKey(), serviceAccount);
+        settings.setSecureSettings(secureSettings);
+        return settings.build();
     }
 
     public void testChunkSize() {
@@ -97,7 +108,7 @@ public class GoogleCloudStorageBlobStoreRepositoryTests extends ESBlobStoreRepos
         assertEquals(GoogleCloudStorageRepository.MAX_CHUNK_SIZE, chunkSize);
 
         // chunk size in settings
-        int size = randomIntBetween(1, 100);
+        final int size = randomIntBetween(1, 100);
         repositoryMetaData = new RepositoryMetaData("repo", GoogleCloudStorageRepository.TYPE,
                                                        Settings.builder().put("chunk_size", size + "mb").build());
         chunkSize = GoogleCloudStorageRepository.getSetting(GoogleCloudStorageRepository.CHUNK_SIZE, repositoryMetaData);
@@ -105,7 +116,7 @@ public class GoogleCloudStorageBlobStoreRepositoryTests extends ESBlobStoreRepos
 
         // zero bytes is not allowed
         IllegalArgumentException e = expectThrows(IllegalArgumentException.class, () -> {
-            RepositoryMetaData repoMetaData = new RepositoryMetaData("repo", GoogleCloudStorageRepository.TYPE,
+            final RepositoryMetaData repoMetaData = new RepositoryMetaData("repo", GoogleCloudStorageRepository.TYPE,
                                                                         Settings.builder().put("chunk_size", "0").build());
             GoogleCloudStorageRepository.getSetting(GoogleCloudStorageRepository.CHUNK_SIZE, repoMetaData);
         });
@@ -113,7 +124,7 @@ public class GoogleCloudStorageBlobStoreRepositoryTests extends ESBlobStoreRepos
 
         // negative bytes not allowed
         e = expectThrows(IllegalArgumentException.class, () -> {
-            RepositoryMetaData repoMetaData = new RepositoryMetaData("repo", GoogleCloudStorageRepository.TYPE,
+            final RepositoryMetaData repoMetaData = new RepositoryMetaData("repo", GoogleCloudStorageRepository.TYPE,
                                                                         Settings.builder().put("chunk_size", "-1").build());
             GoogleCloudStorageRepository.getSetting(GoogleCloudStorageRepository.CHUNK_SIZE, repoMetaData);
         });
@@ -121,10 +132,96 @@ public class GoogleCloudStorageBlobStoreRepositoryTests extends ESBlobStoreRepos
 
         // greater than max chunk size not allowed
         e = expectThrows(IllegalArgumentException.class, () -> {
-            RepositoryMetaData repoMetaData = new RepositoryMetaData("repo", GoogleCloudStorageRepository.TYPE,
+            final RepositoryMetaData repoMetaData = new RepositoryMetaData("repo", GoogleCloudStorageRepository.TYPE,
                                                                         Settings.builder().put("chunk_size", "101mb").build());
             GoogleCloudStorageRepository.getSetting(GoogleCloudStorageRepository.CHUNK_SIZE, repoMetaData);
         });
         assertEquals("failed to parse value [101mb] for setting [chunk_size], must be <= [100mb]", e.getMessage());
+    }
+
+    public static class TestGoogleCloudStoragePlugin extends GoogleCloudStoragePlugin {
+
+        public TestGoogleCloudStoragePlugin(Settings settings) {
+            super(settings);
+        }
+
+        @Override
+        protected GoogleCloudStorageService createStorageService() {
+            return new GoogleCloudStorageService() {
+                @Override
+                StorageOptions createStorageOptions(final GoogleCloudStorageClientSettings clientSettings,
+                                                    final HttpTransportOptions httpTransportOptions) {
+                    StorageOptions options = super.createStorageOptions(clientSettings, httpTransportOptions);
+                    return options.toBuilder()
+                        .setRetrySettings(RetrySettings.newBuilder()
+                            .setTotalTimeout(options.getRetrySettings().getTotalTimeout())
+                            .setInitialRetryDelay(Duration.ofMillis(10L))
+                            .setRetryDelayMultiplier(options.getRetrySettings().getRetryDelayMultiplier())
+                            .setMaxRetryDelay(Duration.ofSeconds(1L))
+                            .setMaxAttempts(0)
+                            .setJittered(false)
+                            .setInitialRpcTimeout(options.getRetrySettings().getInitialRpcTimeout())
+                            .setRpcTimeoutMultiplier(options.getRetrySettings().getRpcTimeoutMultiplier())
+                            .setMaxRpcTimeout(options.getRetrySettings().getMaxRpcTimeout())
+                            .build())
+                        .build();
+                }
+            };
+        }
+
+        @Override
+        public Map<String, Repository.Factory> getRepositories(Environment env, NamedXContentRegistry registry, ThreadPool threadPool) {
+            return Collections.singletonMap(GoogleCloudStorageRepository.TYPE,
+                metadata -> new GoogleCloudStorageRepository(metadata, registry, this.storageService, threadPool) {
+                    @Override
+                    protected GoogleCloudStorageBlobStore createBlobStore() {
+                        return new GoogleCloudStorageBlobStore("bucket", "test", storageService) {
+                            @Override
+                            long getLargeBlobThresholdInBytes() {
+                                return ByteSizeUnit.MB.toBytes(1);
+                            }
+                        };
+                    }
+                });
+        }
+    }
+
+    /**
+     * HTTP handler that injects random  Google Cloud Storage service errors
+     *
+     * Note: it is not a good idea to allow this handler to simulate too many errors as it would
+     * slow down the test suite.
+     */
+    @SuppressForbidden(reason = "this test uses a HttpServer to emulate a Google Cloud Storage endpoint")
+    private static class GoogleErroneousHttpHandler extends ErroneousHttpHandler {
+
+        GoogleErroneousHttpHandler(final HttpHandler delegate, final int maxErrorsPerRequest) {
+            super(delegate, maxErrorsPerRequest);
+        }
+
+        @Override
+        protected String requestUniqueId(HttpExchange exchange) {
+            if ("/token".equals(exchange.getRequestURI().getPath())) {
+                try {
+                    // token content is unique per node (not per request)
+                    return Streams.readFully(exchange.getRequestBody()).utf8ToString();
+                } catch (IOException e) {
+                    throw new AssertionError("Unable to read token request body", e);
+                }
+            }
+
+            final String range = exchange.getRequestHeaders().getFirst("Content-Range");
+            return exchange.getRemoteAddress().toString()
+                + " " + exchange.getRequestMethod()
+                + " " + exchange.getRequestURI()
+                + (range != null ?  " " + range :  "");
+        }
+
+        @Override
+        protected boolean canFailRequest(final HttpExchange exchange) {
+            // Batch requests are not retried so we don't want to fail them
+            // The batched request are supposed to be retried (not tested here)
+            return exchange.getRequestURI().toString().startsWith("/batch/") == false;
+        }
     }
 }

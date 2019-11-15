@@ -19,28 +19,17 @@
 
 package org.elasticsearch.action.admin.indices.recovery;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
 /**
  * Recovery information action
  */
-public class RecoveryAction extends Action<RecoveryRequest, RecoveryResponse, RecoveryRequestBuilder> {
+public class RecoveryAction extends ActionType<RecoveryResponse> {
 
     public static final RecoveryAction INSTANCE = new RecoveryAction();
     public static final String NAME = "indices:monitor/recovery";
 
     private RecoveryAction() {
-        super(NAME);
-    }
-
-    @Override
-    public RecoveryRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new RecoveryRequestBuilder(client, this);
-    }
-
-    @Override
-    public RecoveryResponse newResponse() {
-        return new RecoveryResponse();
+        super(NAME, RecoveryResponse::new);
     }
 }

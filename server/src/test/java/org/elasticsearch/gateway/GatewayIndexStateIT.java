@@ -19,6 +19,7 @@
 
 package org.elasticsearch.gateway;
 
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.Version;
@@ -29,18 +30,24 @@ import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.coordination.CoordinationMetaData;
 import org.elasticsearch.cluster.metadata.IndexGraveyard;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.metadata.Manifest;
 import org.elasticsearch.cluster.metadata.MappingMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.routing.IndexRoutingTable;
+import org.elasticsearch.cluster.routing.IndexShardRoutingTable;
+import org.elasticsearch.cluster.routing.RoutingTable;
 import org.elasticsearch.cluster.routing.ShardRoutingState;
+import org.elasticsearch.cluster.routing.UnassignedInfo;
+import org.elasticsearch.cluster.service.ClusterService;
+import org.elasticsearch.common.CheckedConsumer;
 import org.elasticsearch.common.Priority;
-import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentType;
-import org.elasticsearch.discovery.zen.ElectMasterService;
+import org.elasticsearch.core.internal.io.IOUtils;
 import org.elasticsearch.env.NodeEnvironment;
 import org.elasticsearch.index.mapper.MapperParsingException;
 import org.elasticsearch.indices.IndexClosedException;
@@ -51,20 +58,35 @@ import org.elasticsearch.test.ESIntegTestCase.Scope;
 import org.elasticsearch.test.InternalTestCluster.RestartCallback;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.elasticsearch.action.support.WriteRequest.RefreshPolicy.IMMEDIATE;
 import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.nullValue;
+import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.notNullValue;
 
 @ClusterScope(scope = Scope.TEST, numDataNodes = 0)
 public class GatewayIndexStateIT extends ESIntegTestCase {
 
-    private final Logger logger = Loggers.getLogger(GatewayIndexStateIT.class);
+    private final Logger logger = LogManager.getLogger(GatewayIndexStateIT.class);
+
+    @Override
+    protected boolean addMockInternalEngine() {
+        // testRecoverBrokenIndexMetadata replies on the flushing on shutdown behavior which can be randomly disabled in MockInternalEngine.
+        return false;
+    }
 
     public void testMappingMetaDataParsed() throws Exception {
         logger.info("--> starting 1 nodes");
@@ -78,8 +100,8 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
 
         logger.info("--> verify meta _routing required exists");
         MappingMetaData mappingMd = client().admin().cluster().prepareState().execute().actionGet().getState().metaData()
-            .index("test").mapping("type1");
-        assertThat(mappingMd.routing().required(), equalTo(true));
+            .index("test").mapping();
+        assertThat(mappingMd.routingRequired(), equalTo(true));
 
         logger.info("--> restarting nodes...");
         internalCluster().fullRestart();
@@ -88,8 +110,8 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
         ensureYellow();
 
         logger.info("--> verify meta _routing required exists");
-        mappingMd = client().admin().cluster().prepareState().execute().actionGet().getState().metaData().index("test").mapping("type1");
-        assertThat(mappingMd.routing().required(), equalTo(true));
+        mappingMd = client().admin().cluster().prepareState().execute().actionGet().getState().metaData().index("test").mapping();
+        assertThat(mappingMd.routingRequired(), equalTo(true));
     }
 
     public void testSimpleOpenClose() throws Exception {
@@ -111,33 +133,33 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
             equalTo(test.totalNumShards));
 
         logger.info("--> indexing a simple document");
-        client().prepareIndex("test", "type1", "1").setSource("field1", "value1").get();
+        client().prepareIndex("test").setId("1").setSource("field1", "value1").get();
 
         logger.info("--> closing test index...");
-        client().admin().indices().prepareClose("test").get();
+        assertAcked(client().admin().indices().prepareClose("test"));
 
         stateResponse = client().admin().cluster().prepareState().execute().actionGet();
         assertThat(stateResponse.getState().metaData().index("test").getState(), equalTo(IndexMetaData.State.CLOSE));
-        assertThat(stateResponse.getState().routingTable().index("test"), nullValue());
+        assertThat(stateResponse.getState().routingTable().index("test"), notNullValue());
 
         logger.info("--> verifying that the state is green");
         ensureGreen();
 
         logger.info("--> trying to index into a closed index ...");
         try {
-            client().prepareIndex("test", "type1", "1").setSource("field1", "value1").setTimeout("1s").execute().actionGet();
+            client().prepareIndex("test").setId("1").setSource("field1", "value1").execute().actionGet();
             fail();
         } catch (IndexClosedException e) {
             // all is well
         }
 
         logger.info("--> creating another index (test2) by indexing into it");
-        client().prepareIndex("test2", "type1", "1").setSource("field1", "value1").execute().actionGet();
+        client().prepareIndex("test2").setId("1").setSource("field1", "value1").execute().actionGet();
         logger.info("--> verifying that the state is green");
         ensureGreen();
 
         logger.info("--> opening the first index again...");
-        client().admin().indices().prepareOpen("test").execute().actionGet();
+        assertAcked(client().admin().indices().prepareOpen("test"));
 
         logger.info("--> verifying that the state is green");
         ensureGreen();
@@ -149,14 +171,14 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
             equalTo(test.totalNumShards));
 
         logger.info("--> trying to get the indexed document on the first index");
-        GetResponse getResponse = client().prepareGet("test", "type1", "1").execute().actionGet();
+        GetResponse getResponse = client().prepareGet("test", "1").execute().actionGet();
         assertThat(getResponse.isExists(), equalTo(true));
 
         logger.info("--> closing test index...");
-        client().admin().indices().prepareClose("test").execute().actionGet();
+        assertAcked(client().admin().indices().prepareClose("test"));
         stateResponse = client().admin().cluster().prepareState().execute().actionGet();
         assertThat(stateResponse.getState().metaData().index("test").getState(), equalTo(IndexMetaData.State.CLOSE));
-        assertThat(stateResponse.getState().routingTable().index("test"), nullValue());
+        assertThat(stateResponse.getState().routingTable().index("test"), notNullValue());
 
         logger.info("--> restarting nodes...");
         internalCluster().fullRestart();
@@ -165,11 +187,11 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
 
         stateResponse = client().admin().cluster().prepareState().execute().actionGet();
         assertThat(stateResponse.getState().metaData().index("test").getState(), equalTo(IndexMetaData.State.CLOSE));
-        assertThat(stateResponse.getState().routingTable().index("test"), nullValue());
+        assertThat(stateResponse.getState().routingTable().index("test"), notNullValue());
 
         logger.info("--> trying to index into a closed index ...");
         try {
-            client().prepareIndex("test", "type1", "1").setSource("field1", "value1").setTimeout("1s").execute().actionGet();
+            client().prepareIndex("test").setId("1").setSource("field1", "value1").execute().actionGet();
             fail();
         } catch (IndexClosedException e) {
             // all is well
@@ -188,11 +210,11 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
             equalTo(test.totalNumShards));
 
         logger.info("--> trying to get the indexed document on the first round (before close and shutdown)");
-        getResponse = client().prepareGet("test", "type1", "1").execute().actionGet();
+        getResponse = client().prepareGet("test", "1").execute().actionGet();
         assertThat(getResponse.isExists(), equalTo(true));
 
         logger.info("--> indexing a simple document");
-        client().prepareIndex("test", "type1", "2").setSource("field1", "value1").execute().actionGet();
+        client().prepareIndex("test").setId("2").setSource("field1", "value1").execute().actionGet();
     }
 
     public void testJustMasterNode() throws Exception {
@@ -204,11 +226,13 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
         logger.info("--> create an index");
         client().admin().indices().prepareCreate("test").setWaitForActiveShards(ActiveShardCount.NONE).execute().actionGet();
 
-        logger.info("--> closing master node");
-        internalCluster().closeNonSharedNodes(false);
-
-        logger.info("--> starting 1 master node non data again");
-        internalCluster().startNode(Settings.builder().put(Node.NODE_DATA_SETTING.getKey(), false).build());
+        logger.info("--> restarting master node");
+        internalCluster().fullRestart(new RestartCallback(){
+            @Override
+            public Settings onNodeStopped(String nodeName) {
+                return Settings.builder().put(Node.NODE_DATA_SETTING.getKey(), false).build();
+            }
+        });
 
         logger.info("--> waiting for test index to be created");
         ClusterHealthResponse health = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setIndices("test")
@@ -220,7 +244,7 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
         assertThat(clusterStateResponse.getState().metaData().hasIndex("test"), equalTo(true));
     }
 
-    public void testJustMasterNodeAndJustDataNode() throws Exception {
+    public void testJustMasterNodeAndJustDataNode() {
         logger.info("--> cleaning nodes");
 
         logger.info("--> starting 1 master node non data");
@@ -230,7 +254,7 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
         logger.info("--> create an index");
         client().admin().indices().prepareCreate("test").execute().actionGet();
 
-        client().prepareIndex("test", "type1").setSource("field1", "value1").setTimeout("100ms").execute().actionGet();
+        client().prepareIndex("test").setSource("field1", "value1").execute().actionGet();
     }
 
     public void testTwoNodesSingleDoc() throws Exception {
@@ -240,7 +264,7 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
         internalCluster().startNodes(2);
 
         logger.info("--> indexing a simple document");
-        client().prepareIndex("test", "type1", "1").setSource("field1", "value1").setRefreshPolicy(IMMEDIATE).get();
+        client().prepareIndex("test").setId("1").setSource("field1", "value1").setRefreshPolicy(IMMEDIATE).get();
 
         logger.info("--> waiting for green status");
         ClusterHealthResponse health = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus()
@@ -253,11 +277,11 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
         }
 
         logger.info("--> closing test index...");
-        client().admin().indices().prepareClose("test").execute().actionGet();
+        assertAcked(client().admin().indices().prepareClose("test"));
 
         ClusterStateResponse stateResponse = client().admin().cluster().prepareState().execute().actionGet();
         assertThat(stateResponse.getState().metaData().index("test").getState(), equalTo(IndexMetaData.State.CLOSE));
-        assertThat(stateResponse.getState().routingTable().index("test"), nullValue());
+        assertThat(stateResponse.getState().routingTable().index("test"), notNullValue());
 
         logger.info("--> opening the index...");
         client().admin().indices().prepareOpen("test").execute().actionGet();
@@ -272,51 +296,6 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
         for (int i = 0; i < 10; i++) {
             assertHitCount(client().prepareSearch().setQuery(matchAllQuery()).get(), 1L);
         }
-    }
-
-    public void testDanglingIndices() throws Exception {
-        logger.info("--> starting two nodes");
-
-        final String node_1 = internalCluster().startNodes(2).get(0);
-
-        logger.info("--> indexing a simple document");
-        client().prepareIndex("test", "type1", "1").setSource("field1", "value1").setRefreshPolicy(IMMEDIATE).get();
-
-        logger.info("--> waiting for green status");
-        ensureGreen();
-
-        logger.info("--> verify 1 doc in the index");
-        for (int i = 0; i < 10; i++) {
-            assertHitCount(client().prepareSearch().setQuery(matchAllQuery()).get(), 1L);
-        }
-        assertThat(client().prepareGet("test", "type1", "1").execute().actionGet().isExists(), equalTo(true));
-
-        logger.info("--> restarting the nodes");
-        internalCluster().fullRestart(new RestartCallback() {
-            @Override
-            public boolean clearData(String nodeName) {
-                return node_1.equals(nodeName);
-            }
-        });
-
-        logger.info("--> waiting for green status");
-        ensureGreen();
-
-        // spin a bit waiting for the index to exists
-        long time = System.currentTimeMillis();
-        while ((System.currentTimeMillis() - time) < TimeValue.timeValueSeconds(10).millis()) {
-            if (client().admin().indices().prepareExists("test").execute().actionGet().isExists()) {
-                break;
-            }
-        }
-
-        logger.info("--> verify that the dangling index exists");
-        assertThat(client().admin().indices().prepareExists("test").execute().actionGet().isExists(), equalTo(true));
-        logger.info("--> waiting for green status");
-        ensureGreen();
-
-        logger.info("--> verify the doc is there");
-        assertThat(client().prepareGet("test", "type1", "1").execute().actionGet().isExists(), equalTo(true));
     }
 
     /**
@@ -349,7 +328,8 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
                 logger.info("--> delete index and verify it is deleted");
                 final Client client = client(otherNode);
                 client.admin().indices().prepareDelete(indexName).execute().actionGet();
-                assertFalse(client.admin().indices().prepareExists(indexName).execute().actionGet().isExists());
+                assertFalse(indexExists(indexName, client));
+                logger.info("--> index deleted");
                 return super.onNodeStopped(nodeName);
             }
         });
@@ -362,7 +342,7 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
         ensureGreen();
 
         logger.info("--> verify that the deleted index is removed from the cluster and not reimported as dangling by the restarted node");
-        assertFalse(client().admin().indices().prepareExists(indexName).execute().actionGet().isExists());
+        assertFalse(indexExists(indexName));
         assertBusy(() -> {
             final NodeEnvironment nodeEnv = internalCluster().getInstance(NodeEnvironment.class);
             try {
@@ -383,7 +363,7 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
         logger.info("--> starting one node");
         internalCluster().startNode();
         logger.info("--> indexing a simple document");
-        client().prepareIndex("test", "type1", "1").setSource("field1", "value1").setRefreshPolicy(IMMEDIATE).get();
+        client().prepareIndex("test").setId("1").setSource("field1", "value1").setRefreshPolicy(IMMEDIATE).get();
         logger.info("--> waiting for green status");
         if (usually()) {
             ensureYellow();
@@ -396,24 +376,34 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
                     .waitForNoRelocatingShards(true).waitForNodes("2")).actionGet();
         }
         ClusterState state = client().admin().cluster().prepareState().get().getState();
-        IndexMetaData metaData = state.getMetaData().index("test");
-        for (NodeEnvironment services : internalCluster().getInstances(NodeEnvironment.class)) {
-            IndexMetaData brokenMeta = IndexMetaData.builder(metaData).settings(Settings.builder().put(metaData.getSettings())
+
+        final IndexMetaData metaData = state.getMetaData().index("test");
+        final IndexMetaData brokenMeta = IndexMetaData.builder(metaData).settings(Settings.builder().put(metaData.getSettings())
                 .put(IndexMetaData.SETTING_VERSION_CREATED, Version.CURRENT.minimumIndexCompatibilityVersion().id)
-                 // this is invalid but should be archived
-                .put("index.similarity.BM25.type", "classic")
-                 // this one is not validated ahead of time and breaks allocation
+                // this is invalid but should be archived
+                .put("index.similarity.BM25.type", "boolean")
+                // this one is not validated ahead of time and breaks allocation
                 .put("index.analysis.filter.myCollator.type", "icu_collation")
-            ).build();
-            IndexMetaData.FORMAT.write(brokenMeta, services.indexPaths(brokenMeta.getIndex()));
-        }
-        internalCluster().fullRestart();
-        // ensureGreen(closedIndex) waits for the index to show up in the metadata
-        // this is crucial otherwise the state call below might not contain the index yet
-        ensureGreen(metaData.getIndex().getName());
+        ).build();
+        writeBrokenMeta(metaStateService -> metaStateService.writeIndexAndUpdateManifest("broken metadata", brokenMeta));
+
+        // check that the cluster does not keep reallocating shards
+        assertBusy(() -> {
+            final RoutingTable routingTable = client().admin().cluster().prepareState().get().getState().routingTable();
+            final IndexRoutingTable indexRoutingTable = routingTable.index("test");
+            assertNotNull(indexRoutingTable);
+            for (IndexShardRoutingTable shardRoutingTable : indexRoutingTable) {
+                assertTrue(shardRoutingTable.primaryShard().unassigned());
+                assertEquals(UnassignedInfo.AllocationStatus.DECIDERS_NO,
+                    shardRoutingTable.primaryShard().unassignedInfo().getLastAllocationStatus());
+                assertThat(shardRoutingTable.primaryShard().unassignedInfo().getNumFailedAllocations(), greaterThan(0));
+            }
+        }, 60, TimeUnit.SECONDS);
+        client().admin().indices().prepareClose("test").get();
+
         state = client().admin().cluster().prepareState().get().getState();
         assertEquals(IndexMetaData.State.CLOSE, state.getMetaData().index(metaData.getIndex()).getState());
-        assertEquals("classic", state.getMetaData().index(metaData.getIndex()).getSettings().get("archived.index.similarity.BM25.type"));
+        assertEquals("boolean", state.getMetaData().index(metaData.getIndex()).getSettings().get("archived.index.similarity.BM25.type"));
         // try to open it with the broken setting - fail again!
         ElasticsearchException ex = expectThrows(ElasticsearchException.class, () -> client().admin().indices().prepareOpen("test").get());
         assertEquals(ex.getMessage(), "Failed to verify index " + metaData.getIndex());
@@ -432,7 +422,7 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
         logger.info("--> starting one node");
         internalCluster().startNode();
         prepareCreate("test").setSettings(Settings.builder()
-            .put("index.analysis.analyzer.test.tokenizer", "keyword")
+            .put("index.analysis.analyzer.test.tokenizer", "standard")
             .put("index.number_of_shards", "1"))
             .addMapping("type1", "{\n" +
                 "    \"type1\": {\n" +
@@ -445,7 +435,7 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
                 "    }\n" +
                 "  }}", XContentType.JSON).get();
         logger.info("--> indexing a simple document");
-        client().prepareIndex("test", "type1", "1").setSource("field1", "value one").setRefreshPolicy(IMMEDIATE).get();
+        client().prepareIndex("test").setId("1").setSource("field1", "value one").setRefreshPolicy(IMMEDIATE).get();
         logger.info("--> waiting for green status");
         if (usually()) {
             ensureYellow();
@@ -458,18 +448,25 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
                     .waitForNoRelocatingShards(true).waitForNodes("2")).actionGet();
         }
         ClusterState state = client().admin().cluster().prepareState().get().getState();
-        IndexMetaData metaData = state.getMetaData().index("test");
-        for (NodeEnvironment services : internalCluster().getInstances(NodeEnvironment.class)) {
-            IndexMetaData brokenMeta = IndexMetaData.builder(metaData).settings(metaData.getSettings()
+
+        final IndexMetaData metaData = state.getMetaData().index("test");
+        final IndexMetaData brokenMeta = IndexMetaData.builder(metaData).settings(metaData.getSettings()
                 .filter((s) -> "index.analysis.analyzer.test.tokenizer".equals(s) == false)).build();
-            IndexMetaData.FORMAT.write(brokenMeta, services.indexPaths(brokenMeta.getIndex()));
-        }
-        internalCluster().fullRestart();
-        // ensureGreen(closedIndex) waits for the index to show up in the metadata
-        // this is crucial otherwise the state call below might not contain the index yet
-        ensureGreen(metaData.getIndex().getName());
-        state = client().admin().cluster().prepareState().get().getState();
-        assertEquals(IndexMetaData.State.CLOSE, state.getMetaData().index(metaData.getIndex()).getState());
+        writeBrokenMeta(metaStateService -> metaStateService.writeIndexAndUpdateManifest("broken metadata", brokenMeta));
+
+        // check that the cluster does not keep reallocating shards
+        assertBusy(() -> {
+            final RoutingTable routingTable = client().admin().cluster().prepareState().get().getState().routingTable();
+            final IndexRoutingTable indexRoutingTable = routingTable.index("test");
+            assertNotNull(indexRoutingTable);
+            for (IndexShardRoutingTable shardRoutingTable : indexRoutingTable) {
+                assertTrue(shardRoutingTable.primaryShard().unassigned());
+                assertEquals(UnassignedInfo.AllocationStatus.DECIDERS_NO,
+                    shardRoutingTable.primaryShard().unassignedInfo().getLastAllocationStatus());
+                assertThat(shardRoutingTable.primaryShard().unassignedInfo().getNumFailedAllocations(), greaterThan(0));
+            }
+        }, 60, TimeUnit.SECONDS);
+        client().admin().indices().prepareClose("test").get();
 
         // try to open it with the broken setting - fail again!
         ElasticsearchException ex = expectThrows(ElasticsearchException.class, () -> client().admin().indices().prepareOpen("test").get());
@@ -482,7 +479,7 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
     public void testArchiveBrokenClusterSettings() throws Exception {
         logger.info("--> starting one node");
         internalCluster().startNode();
-        client().prepareIndex("test", "type1", "1").setSource("field1", "value1").setRefreshPolicy(IMMEDIATE).get();
+        client().prepareIndex("test").setId("1").setSource("field1", "value1").setRefreshPolicy(IMMEDIATE).get();
         logger.info("--> waiting for green status");
         if (usually()) {
             ensureYellow();
@@ -495,19 +492,18 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
                     .waitForNoRelocatingShards(true).waitForNodes("2")).actionGet();
         }
         ClusterState state = client().admin().cluster().prepareState().get().getState();
-        MetaData metaData = state.getMetaData();
-        for (NodeEnvironment nodeEnv : internalCluster().getInstances(NodeEnvironment.class)) {
-            MetaData brokenMeta = MetaData.builder(metaData).persistentSettings(Settings.builder()
+
+        final MetaData metaData = state.getMetaData();
+        final MetaData brokenMeta = MetaData.builder(metaData).persistentSettings(Settings.builder()
                 .put(metaData.persistentSettings()).put("this.is.unknown", true)
-                .put(ElectMasterService.DISCOVERY_ZEN_MINIMUM_MASTER_NODES_SETTING.getKey(), "broken").build()).build();
-            MetaData.FORMAT.write(brokenMeta, nodeEnv.nodeDataPaths());
-        }
-        internalCluster().fullRestart();
+                .put(MetaData.SETTING_CLUSTER_MAX_SHARDS_PER_NODE.getKey(), "broken").build()).build();
+        writeBrokenMeta(metaStateService -> metaStateService.writeGlobalStateAndUpdateManifest("broken metadata", brokenMeta));
+
         ensureYellow("test"); // wait for state recovery
         state = client().admin().cluster().prepareState().get().getState();
         assertEquals("true", state.metaData().persistentSettings().get("archived.this.is.unknown"));
         assertEquals("broken", state.metaData().persistentSettings().get("archived."
-            + ElectMasterService.DISCOVERY_ZEN_MINIMUM_MASTER_NODES_SETTING.getKey()));
+            + MetaData.SETTING_CLUSTER_MAX_SHARDS_PER_NODE.getKey()));
 
         // delete these settings
         client().admin().cluster().prepareUpdateSettings().setPersistentSettings(Settings.builder().putNull("archived.*")).get();
@@ -515,7 +511,56 @@ public class GatewayIndexStateIT extends ESIntegTestCase {
         state = client().admin().cluster().prepareState().get().getState();
         assertNull(state.metaData().persistentSettings().get("archived.this.is.unknown"));
         assertNull(state.metaData().persistentSettings().get("archived."
-            + ElectMasterService.DISCOVERY_ZEN_MINIMUM_MASTER_NODES_SETTING.getKey()));
+            + MetaData.SETTING_CLUSTER_MAX_SHARDS_PER_NODE.getKey()));
         assertHitCount(client().prepareSearch().setQuery(matchAllQuery()).get(), 1L);
+    }
+
+    public void testHalfDeletedIndexImport() throws Exception {
+        // It's possible for a 6.x node to add a tombstone for an index but not actually delete the index metadata from disk since that
+        // deletion is slightly deferred and may race against the node being shut down; if you upgrade to 7.x when in this state then the
+        // node won't start.
+
+        internalCluster().startNode();
+        createIndex("test", Settings.builder()
+            .put(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 1)
+            .put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 0)
+            .build());
+        ensureGreen("test");
+
+        final MetaData metaData = internalCluster().getInstance(ClusterService.class).state().metaData();
+        final Path[] paths = internalCluster().getInstance(NodeEnvironment.class).nodeDataPaths();
+        writeBrokenMeta(metaStateService -> {
+            metaStateService.writeGlobalState("test", MetaData.builder(metaData)
+                // we remove the manifest file, resetting the term and making this look like an upgrade from 6.x, so must also reset the
+                // term in the coordination metadata
+                .coordinationMetaData(CoordinationMetaData.builder(metaData.coordinationMetaData()).term(0L).build())
+                // add a tombstone but do not delete the index metadata from disk
+                .putCustom(IndexGraveyard.TYPE, IndexGraveyard.builder().addTombstone(metaData.index("test").getIndex()).build()).build());
+            for (final Path path : paths) {
+                try (Stream<Path> stateFiles = Files.list(path.resolve(MetaDataStateFormat.STATE_DIR_NAME))) {
+                    for (final Path manifestPath : stateFiles
+                        .filter(p -> p.getFileName().toString().startsWith(Manifest.FORMAT.getPrefix())).collect(Collectors.toList())) {
+                        IOUtils.rm(manifestPath);
+                    }
+                }
+            }
+        });
+
+        ensureGreen();
+
+        assertBusy(() -> assertThat(internalCluster().getInstance(NodeEnvironment.class).availableIndexFolders(), empty()));
+    }
+
+    private void writeBrokenMeta(CheckedConsumer<MetaStateService, IOException> writer) throws Exception {
+        Map<String, MetaStateService> metaStateServices = Stream.of(internalCluster().getNodeNames())
+            .collect(Collectors.toMap(Function.identity(), nodeName -> internalCluster().getInstance(MetaStateService.class, nodeName)));
+        internalCluster().fullRestart(new RestartCallback(){
+            @Override
+            public Settings onNodeStopped(String nodeName) throws Exception {
+                final MetaStateService metaStateService = metaStateServices.get(nodeName);
+                writer.accept(metaStateService);
+                return super.onNodeStopped(nodeName);
+            }
+        });
     }
 }

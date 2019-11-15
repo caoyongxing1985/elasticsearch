@@ -20,16 +20,25 @@
 package org.elasticsearch.action.fieldcaps;
 
 import org.elasticsearch.common.io.stream.Writeable;
-import org.elasticsearch.test.AbstractWireSerializingTestCase;
+import org.elasticsearch.common.xcontent.XContentParser;
+import org.elasticsearch.test.AbstractSerializingTestCase;
 
+import java.io.IOException;
 import java.util.Arrays;
 
 import static org.hamcrest.Matchers.equalTo;
 
-public class FieldCapabilitiesTests extends AbstractWireSerializingTestCase<FieldCapabilities> {
+public class FieldCapabilitiesTests extends AbstractSerializingTestCase<FieldCapabilities> {
+    private static final String FIELD_NAME = "field";
+
+    @Override
+    protected FieldCapabilities doParseInstance(XContentParser parser) throws IOException {
+        return FieldCapabilities.fromXContent(FIELD_NAME, parser);
+    }
+
     @Override
     protected FieldCapabilities createTestInstance() {
-        return randomFieldCaps();
+        return randomFieldCaps(FIELD_NAME);
     }
 
     @Override
@@ -77,12 +86,12 @@ public class FieldCapabilitiesTests extends AbstractWireSerializingTestCase<Fiel
             assertThat(cap2.isAggregatable(), equalTo(false));
             assertThat(cap2.indices().length, equalTo(3));
             assertThat(cap2.indices(), equalTo(new String[]{"index1", "index2", "index3"}));
-            assertThat(cap1.nonSearchableIndices(), equalTo(new String[]{"index1", "index3"}));
-            assertThat(cap1.nonAggregatableIndices(), equalTo(new String[]{"index2", "index3"}));
+            assertThat(cap2.nonSearchableIndices(), equalTo(new String[]{"index1", "index3"}));
+            assertThat(cap2.nonAggregatableIndices(), equalTo(new String[]{"index2", "index3"}));
         }
     }
 
-    static FieldCapabilities randomFieldCaps() {
+    static FieldCapabilities randomFieldCaps(String fieldName) {
         String[] indices = null;
         if (randomBoolean()) {
             indices = new String[randomIntBetween(1, 5)];
@@ -104,7 +113,7 @@ public class FieldCapabilitiesTests extends AbstractWireSerializingTestCase<Fiel
                 nonAggregatableIndices[i] = randomAlphaOfLengthBetween(5, 20);
             }
         }
-        return new FieldCapabilities(randomAlphaOfLengthBetween(5, 20),
+        return new FieldCapabilities(fieldName,
             randomAlphaOfLengthBetween(5, 20), randomBoolean(), randomBoolean(),
             indices, nonSearchableIndices, nonAggregatableIndices);
     }

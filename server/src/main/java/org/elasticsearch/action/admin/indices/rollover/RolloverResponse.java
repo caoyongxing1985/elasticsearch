@@ -36,6 +36,13 @@ import java.util.Objects;
 
 import static org.elasticsearch.common.xcontent.ConstructingObjectParser.constructorArg;
 
+
+/**
+ * Response object for {@link RolloverRequest} API
+ *
+ * Note: there is a new class with the same name for the Java HLRC that uses a typeless format.
+ * Any changes done to this class should also go to that client class.
+ */
 public final class RolloverResponse extends ShardsAcknowledgedResponse implements ToXContentObject {
 
     private static final ParseField NEW_INDEX = new ParseField("new_index");
@@ -58,23 +65,38 @@ public final class RolloverResponse extends ShardsAcknowledgedResponse implement
         declareAcknowledgedAndShardsAcknowledgedFields(PARSER);
     }
 
-    private String oldIndex;
-    private String newIndex;
-    private Map<String, Boolean> conditionStatus;
-    private boolean dryRun;
-    private boolean rolledOver;
+    private final String oldIndex;
+    private final String newIndex;
+    private final Map<String, Boolean> conditionStatus;
+    private final boolean dryRun;
+    private final boolean rolledOver;
+    // Needs to be duplicated, because shardsAcknowledged gets (de)serailized as last field whereas
+    // in other subclasses of ShardsAcknowledgedResponse this field (de)serailized as first field.
+    private final boolean shardsAcknowledged;
 
-    RolloverResponse() {
+    RolloverResponse(StreamInput in) throws IOException {
+        super(in, false);
+        oldIndex = in.readString();
+        newIndex = in.readString();
+        int conditionSize = in.readVInt();
+        conditionStatus = new HashMap<>(conditionSize);
+        for (int i = 0; i < conditionSize; i++) {
+            conditionStatus.put(in.readString(), in.readBoolean());
+        }
+        dryRun = in.readBoolean();
+        rolledOver = in.readBoolean();
+        shardsAcknowledged = in.readBoolean();
     }
 
-    RolloverResponse(String oldIndex, String newIndex, Map<String, Boolean> conditionResults,
-                             boolean dryRun, boolean rolledOver, boolean acknowledged, boolean shardsAcknowledged) {
+    public RolloverResponse(String oldIndex, String newIndex, Map<String, Boolean> conditionResults,
+                            boolean dryRun, boolean rolledOver, boolean acknowledged, boolean shardsAcknowledged) {
         super(acknowledged, shardsAcknowledged);
         this.oldIndex = oldIndex;
         this.newIndex = newIndex;
         this.dryRun = dryRun;
         this.rolledOver = rolledOver;
         this.conditionStatus = conditionResults;
+        this.shardsAcknowledged = shardsAcknowledged;
     }
 
     /**
@@ -113,19 +135,8 @@ public final class RolloverResponse extends ShardsAcknowledgedResponse implement
     }
 
     @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        oldIndex = in.readString();
-        newIndex = in.readString();
-        int conditionSize = in.readVInt();
-        conditionStatus = new HashMap<>(conditionSize);
-        for (int i = 0; i < conditionSize; i++) {
-            conditionStatus.put(in.readString(), in.readBoolean());
-        }
-        dryRun = in.readBoolean();
-        rolledOver = in.readBoolean();
-        readAcknowledged(in);
-        readShardsAcknowledged(in);
+    public boolean isShardsAcknowledged() {
+        return shardsAcknowledged;
     }
 
     @Override
@@ -140,8 +151,7 @@ public final class RolloverResponse extends ShardsAcknowledgedResponse implement
         }
         out.writeBoolean(dryRun);
         out.writeBoolean(rolledOver);
-        writeAcknowledged(out);
-        writeShardsAcknowledged(out);
+        out.writeBoolean(shardsAcknowledged);
     }
 
     @Override

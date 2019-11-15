@@ -24,7 +24,6 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.TermQuery;
-import org.elasticsearch.common.ParsingException;
 import org.elasticsearch.common.xcontent.XContentParseException;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
@@ -166,32 +165,34 @@ public class ScriptSortBuilderTests extends AbstractSortTestCase<ScriptSortBuild
     }
 
     public void testParseJson() throws IOException {
-        String scriptSort = "{\n" +
-                "\"_script\" : {\n" +
-                    "\"type\" : \"number\",\n" +
-                    "\"script\" : {\n" +
-                        "\"source\": \"doc['field_name'].value * factor\",\n" +
-                        "\"params\" : {\n" +
-                            "\"factor\" : 1.1\n" +
-                            "}\n" +
-                    "},\n" +
-                    "\"mode\" : \"max\",\n" +
-                    "\"order\" : \"asc\"\n" +
-                "} }\n";
-        XContentParser parser = createParser(JsonXContent.jsonXContent, scriptSort);
-        parser.nextToken();
-        parser.nextToken();
-        parser.nextToken();
+        String scriptSort = "{"
+            + "  \"_script\": {"
+            + "    \"type\": \"number\","
+            + "    \"script\": {"
+            + "      \"source\": \"doc['field_name'].value * factor\","
+            + "      \"params\": {"
+            + "        \"factor\": 1.1"
+            + "      }"
+            + "    },"
+            + "    \"mode\": \"max\","
+            + "    \"order\": \"asc\""
+            + "  }"
+            + "}";
+        try (XContentParser parser = createParser(JsonXContent.jsonXContent, scriptSort)) {
+            parser.nextToken();
+            parser.nextToken();
+            parser.nextToken();
 
-        ScriptSortBuilder builder = ScriptSortBuilder.fromXContent(parser, null);
-        assertEquals("doc['field_name'].value * factor", builder.script().getIdOrCode());
-        assertEquals(Script.DEFAULT_SCRIPT_LANG, builder.script().getLang());
-        assertEquals(1.1, builder.script().getParams().get("factor"));
-        assertEquals(ScriptType.INLINE, builder.script().getType());
-        assertEquals(ScriptSortType.NUMBER, builder.type());
-        assertEquals(SortOrder.ASC, builder.order());
-        assertEquals(SortMode.MAX, builder.sortMode());
-        assertNull(builder.getNestedSort());
+            ScriptSortBuilder builder = ScriptSortBuilder.fromXContent(parser, null);
+            assertEquals("doc['field_name'].value * factor", builder.script().getIdOrCode());
+            assertEquals(Script.DEFAULT_SCRIPT_LANG, builder.script().getLang());
+            assertEquals(1.1, builder.script().getParams().get("factor"));
+            assertEquals(ScriptType.INLINE, builder.script().getType());
+            assertEquals(ScriptSortType.NUMBER, builder.type());
+            assertEquals(SortOrder.ASC, builder.order());
+            assertEquals(SortMode.MAX, builder.sortMode());
+            assertNull(builder.getNestedSort());
+        }
     }
 
     public void testParseJson_simple() throws IOException {
@@ -202,54 +203,58 @@ public class ScriptSortBuilderTests extends AbstractSortTestCase<ScriptSortBuild
                 "\"mode\" : \"max\",\n" +
                 "\"order\" : \"asc\"\n" +
                 "} }\n";
-        XContentParser parser = createParser(JsonXContent.jsonXContent, scriptSort);
-        parser.nextToken();
-        parser.nextToken();
-        parser.nextToken();
+        try (XContentParser parser = createParser(JsonXContent.jsonXContent, scriptSort)) {
+            parser.nextToken();
+            parser.nextToken();
+            parser.nextToken();
 
-        ScriptSortBuilder builder = ScriptSortBuilder.fromXContent(parser, null);
-        assertEquals("doc['field_name'].value", builder.script().getIdOrCode());
-        assertEquals(Script.DEFAULT_SCRIPT_LANG, builder.script().getLang());
-        assertEquals(builder.script().getParams(), Collections.emptyMap());
-        assertEquals(ScriptType.INLINE, builder.script().getType());
-        assertEquals(ScriptSortType.NUMBER, builder.type());
-        assertEquals(SortOrder.ASC, builder.order());
-        assertEquals(SortMode.MAX, builder.sortMode());
-        assertNull(builder.getNestedSort());
+            ScriptSortBuilder builder = ScriptSortBuilder.fromXContent(parser, null);
+            assertEquals("doc['field_name'].value", builder.script().getIdOrCode());
+            assertEquals(Script.DEFAULT_SCRIPT_LANG, builder.script().getLang());
+            assertEquals(builder.script().getParams(), Collections.emptyMap());
+            assertEquals(ScriptType.INLINE, builder.script().getType());
+            assertEquals(ScriptSortType.NUMBER, builder.type());
+            assertEquals(SortOrder.ASC, builder.order());
+            assertEquals(SortMode.MAX, builder.sortMode());
+            assertNull(builder.getNestedSort());
+        }
     }
 
     public void testParseBadFieldNameExceptions() throws IOException {
         String scriptSort = "{\"_script\" : {" + "\"bad_field\" : \"number\"" + "} }";
-        XContentParser parser = createParser(JsonXContent.jsonXContent, scriptSort);
-        parser.nextToken();
-        parser.nextToken();
-        parser.nextToken();
+        try (XContentParser parser = createParser(JsonXContent.jsonXContent, scriptSort)) {
+            parser.nextToken();
+            parser.nextToken();
+            parser.nextToken();
 
-        Exception e = expectThrows(IllegalArgumentException.class, () -> ScriptSortBuilder.fromXContent(parser, null));
-        assertEquals("[_script] unknown field [bad_field], parser not found", e.getMessage());
+            XContentParseException e = expectThrows(XContentParseException.class, () -> ScriptSortBuilder.fromXContent(parser, null));
+            assertEquals("[1:15] [_script] unknown field [bad_field], parser not found", e.getMessage());
+        }
     }
 
     public void testParseBadFieldNameExceptionsOnStartObject() throws IOException {
 
         String scriptSort = "{\"_script\" : {" + "\"bad_field\" : { \"order\" : \"asc\" } } }";
-        XContentParser parser = createParser(JsonXContent.jsonXContent, scriptSort);
-        parser.nextToken();
-        parser.nextToken();
-        parser.nextToken();
+        try (XContentParser parser = createParser(JsonXContent.jsonXContent, scriptSort)) {
+            parser.nextToken();
+            parser.nextToken();
+            parser.nextToken();
 
-        Exception e = expectThrows(IllegalArgumentException.class, () -> ScriptSortBuilder.fromXContent(parser, null));
-        assertEquals("[_script] unknown field [bad_field], parser not found", e.getMessage());
+            XContentParseException e = expectThrows(XContentParseException.class, () -> ScriptSortBuilder.fromXContent(parser, null));
+            assertEquals("[1:15] [_script] unknown field [bad_field], parser not found", e.getMessage());
+        }
     }
 
     public void testParseUnexpectedToken() throws IOException {
         String scriptSort = "{\"_script\" : {" + "\"script\" : [ \"order\" : \"asc\" ] } }";
-        XContentParser parser = createParser(JsonXContent.jsonXContent, scriptSort);
-        parser.nextToken();
-        parser.nextToken();
-        parser.nextToken();
+        try (XContentParser parser = createParser(JsonXContent.jsonXContent, scriptSort)) {
+            parser.nextToken();
+            parser.nextToken();
+            parser.nextToken();
 
-        Exception e = expectThrows(XContentParseException.class, () -> ScriptSortBuilder.fromXContent(parser, null));
-        assertThat(e.getMessage(), containsString("[_script] script doesn't support values of type: START_ARRAY"));
+            Exception e = expectThrows(XContentParseException.class, () -> ScriptSortBuilder.fromXContent(parser, null));
+            assertThat(e.getMessage(), containsString("[_script] script doesn't support values of type: START_ARRAY"));
+        }
     }
 
     /**
@@ -263,7 +268,7 @@ public class ScriptSortBuilderTests extends AbstractSortTestCase<ScriptSortBuild
     }
 
     /**
-     * Test that the sort builder mode gets transfered correctly to the SortField
+     * Test that the sort builder mode gets transferred correctly to the SortField
      */
     public void testMultiValueMode() throws IOException {
         QueryShardContext shardContextMock = createMockShardContext();
@@ -320,7 +325,8 @@ public class ScriptSortBuilderTests extends AbstractSortTestCase<ScriptSortBuild
         assertNotNull(nested);
         assertEquals(new MatchAllDocsQuery(), nested.getInnerQuery());
 
-        sortBuilder = new ScriptSortBuilder(mockScript(MOCK_SCRIPT_NAME), ScriptSortType.NUMBER).setNestedPath("path");
+        sortBuilder = new ScriptSortBuilder(mockScript(MOCK_SCRIPT_NAME), ScriptSortType.NUMBER)
+            .setNestedSort(new NestedSortBuilder("path"));
         sortField = sortBuilder.build(shardContextMock).field;
         assertThat(sortField.getComparatorSource(), instanceOf(XFieldComparatorSource.class));
         comparatorSource = (XFieldComparatorSource) sortField.getComparatorSource();
@@ -328,39 +334,16 @@ public class ScriptSortBuilderTests extends AbstractSortTestCase<ScriptSortBuild
         assertNotNull(nested);
         assertEquals(new TermQuery(new Term(TypeFieldMapper.NAME, "__path")), nested.getInnerQuery());
 
-        sortBuilder = new ScriptSortBuilder(mockScript(MOCK_SCRIPT_NAME), ScriptSortType.NUMBER).setNestedPath("path")
-                .setNestedFilter(QueryBuilders.matchAllQuery());
+        sortBuilder = new ScriptSortBuilder(mockScript(MOCK_SCRIPT_NAME), ScriptSortType.NUMBER)
+            .setNestedSort(new NestedSortBuilder("path")
+                .setFilter(QueryBuilders.matchAllQuery()));
         sortField = sortBuilder.build(shardContextMock).field;
         assertThat(sortField.getComparatorSource(), instanceOf(XFieldComparatorSource.class));
         comparatorSource = (XFieldComparatorSource) sortField.getComparatorSource();
         nested = comparatorSource.nested();
         assertNotNull(nested);
         assertEquals(new MatchAllDocsQuery(), nested.getInnerQuery());
-
-        // if nested path is missing, we omit nested element in the comparator
-        sortBuilder = new ScriptSortBuilder(mockScript(MOCK_SCRIPT_NAME), ScriptSortType.NUMBER)
-                .setNestedFilter(QueryBuilders.matchAllQuery());
-        sortField = sortBuilder.build(shardContextMock).field;
-        assertThat(sortField.getComparatorSource(), instanceOf(XFieldComparatorSource.class));
-        comparatorSource = (XFieldComparatorSource) sortField.getComparatorSource();
-        assertNull(comparatorSource.nested());
     }
-
-    /**
-     * Test we can either set nested sort via path/filter or via nested sort builder, not both
-     */
-    public void testNestedSortBothThrows() throws IOException {
-        ScriptSortBuilder sortBuilder = new ScriptSortBuilder(mockScript(MOCK_SCRIPT_NAME), ScriptSortType.NUMBER);
-        IllegalArgumentException iae = expectThrows(IllegalArgumentException.class,
-                () -> sortBuilder.setNestedPath("nestedPath").setNestedSort(new NestedSortBuilder("otherPath")));
-        assertEquals("Setting both nested_path/nested_filter and nested not allowed", iae.getMessage());
-        iae = expectThrows(IllegalArgumentException.class,
-                () -> sortBuilder.setNestedSort(new NestedSortBuilder("otherPath")).setNestedPath("nestedPath"));
-        assertEquals("Setting both nested_path/nested_filter and nested not allowed", iae.getMessage());
-        iae = expectThrows(IllegalArgumentException.class,
-                () -> sortBuilder.setNestedSort(new NestedSortBuilder("otherPath")).setNestedFilter(QueryBuilders.matchAllQuery()));
-        assertEquals("Setting both nested_path/nested_filter and nested not allowed", iae.getMessage());
-     }
 
     /**
      * Test the nested Filter gets rewritten
@@ -373,10 +356,10 @@ public class ScriptSortBuilderTests extends AbstractSortTestCase<ScriptSortBuild
                 return new MatchNoneQueryBuilder();
             }
         };
-        sortBuilder.setNestedPath("path").setNestedFilter(rangeQuery);
-        ScriptSortBuilder rewritten = (ScriptSortBuilder) sortBuilder
+        sortBuilder.setNestedSort(new NestedSortBuilder("path").setFilter(rangeQuery));
+        ScriptSortBuilder rewritten = sortBuilder
                 .rewrite(createMockShardContext());
-        assertNotSame(rangeQuery, rewritten.getNestedFilter());
+        assertNotSame(rangeQuery, rewritten.getNestedSort().getFilter());
     }
 
     /**
@@ -391,7 +374,7 @@ public class ScriptSortBuilderTests extends AbstractSortTestCase<ScriptSortBuild
             }
         };
         sortBuilder.setNestedSort(new NestedSortBuilder("path").setFilter(rangeQuery));
-        ScriptSortBuilder rewritten = (ScriptSortBuilder) sortBuilder
+        ScriptSortBuilder rewritten = sortBuilder
                 .rewrite(createMockShardContext());
         assertNotSame(rangeQuery, rewritten.getNestedSort().getFilter());
     }

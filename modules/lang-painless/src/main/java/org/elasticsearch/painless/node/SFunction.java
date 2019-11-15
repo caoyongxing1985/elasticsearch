@@ -19,25 +19,20 @@
 
 package org.elasticsearch.painless.node;
 
+import org.elasticsearch.painless.ClassWriter;
 import org.elasticsearch.painless.CompilerSettings;
-import org.elasticsearch.painless.Constant;
-import org.elasticsearch.painless.Def;
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Method;
 import org.elasticsearch.painless.Globals;
 import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Locals.Parameter;
 import org.elasticsearch.painless.Locals.Variable;
 import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
-import org.elasticsearch.painless.WriterConstants;
-import org.elasticsearch.painless.node.SSource.Reserved;
-import org.objectweb.asm.ClassVisitor;
-import org.objectweb.asm.Handle;
+import org.elasticsearch.painless.ScriptRoot;
+import org.elasticsearch.painless.lookup.PainlessLookup;
+import org.elasticsearch.painless.lookup.PainlessLookupUtility;
 import org.objectweb.asm.Opcodes;
 
 import java.lang.invoke.MethodType;
-import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -46,81 +41,62 @@ import java.util.Objects;
 import java.util.Set;
 
 import static java.util.Collections.emptyList;
-import static java.util.Collections.unmodifiableSet;
-import static org.elasticsearch.painless.WriterConstants.CLASS_TYPE;
 
 /**
  * Represents a user-defined function.
  */
 public final class SFunction extends AStatement {
-    public static final class FunctionReserved implements Reserved {
-        private final Set<String> usedVariables = new HashSet<>();
-        private int maxLoopCounter = 0;
 
-        @Override
-        public void markUsedVariable(String name) {
-            usedVariables.add(name);
-        }
-
-        @Override
-        public Set<String> getUsedVariables() {
-            return unmodifiableSet(usedVariables);
-        }
-
-        @Override
-        public void addUsedVariables(FunctionReserved reserved) {
-            usedVariables.addAll(reserved.getUsedVariables());
-        }
-
-        @Override
-        public void setMaxLoopCounter(int max) {
-            maxLoopCounter = max;
-        }
-
-        @Override
-        public int getMaxLoopCounter() {
-            return maxLoopCounter;
-        }
-    }
-
-    final FunctionReserved reserved;
     private final String rtnTypeStr;
     public final String name;
     private final List<String> paramTypeStrs;
     private final List<String> paramNameStrs;
-    private final List<AStatement> statements;
+    private final SBlock block;
     public final boolean synthetic;
 
-    Class<?> rtnType = null;
+    private CompilerSettings settings;
+
+    Class<?> returnType;
+    List<Class<?>> typeParameters;
+    MethodType methodType;
+
+    org.objectweb.asm.commons.Method method;
     List<Parameter> parameters = new ArrayList<>();
-    Method method = null;
 
     private Variable loop = null;
 
-    public SFunction(FunctionReserved reserved, Location location, String rtnType, String name,
-                     List<String> paramTypes, List<String> paramNames, List<AStatement> statements,
+    public SFunction(Location location, String rtnType, String name,
+                     List<String> paramTypes, List<String> paramNames, SBlock block,
                      boolean synthetic) {
         super(location);
 
-        this.reserved = Objects.requireNonNull(reserved);
         this.rtnTypeStr = Objects.requireNonNull(rtnType);
         this.name = Objects.requireNonNull(name);
         this.paramTypeStrs = Collections.unmodifiableList(paramTypes);
         this.paramNameStrs = Collections.unmodifiableList(paramNames);
-        this.statements = Collections.unmodifiableList(statements);
+        this.block = Objects.requireNonNull(block);
         this.synthetic = synthetic;
     }
 
     @Override
-    void extractVariables(Set<String> variables) {
-        // we should never be extracting from a function, as functions are top-level!
-        throw new IllegalStateException("Illegal tree structure");
+    void storeSettings(CompilerSettings settings) {
+        block.storeSettings(settings);
+
+        this.settings = settings;
     }
 
-    void generateSignature(Definition definition) {
-        try {
-            rtnType = Definition.TypeToClass(definition.getType(rtnTypeStr));
-        } catch (IllegalArgumentException exception) {
+    @Override
+    void extractVariables(Set<String> variables) {
+        // we reset the list for function scope
+        // note this is not stored for this node
+        // but still required for lambdas
+        block.extractVariables(new HashSet<>());
+    }
+
+    void generateSignature(PainlessLookup painlessLookup) {
+        returnType = painlessLookup.canonicalTypeNameToType(rtnTypeStr);
+
+        if (returnType == null) {
             throw createError(new IllegalArgumentException("Illegal return type [" + rtnTypeStr + "] for function [" + name + "]."));
         }
 
@@ -132,102 +108,75 @@ public final class SFunction extends AStatement {
         List<Class<?>> paramTypes = new ArrayList<>();
 
         for (int param = 0; param < this.paramTypeStrs.size(); ++param) {
-            try {
-                Class<?> paramType = Definition.TypeToClass(definition.getType(this.paramTypeStrs.get(param)));
+            Class<?> paramType = painlessLookup.canonicalTypeNameToType(this.paramTypeStrs.get(param));
 
-                paramClasses[param] = Definition.defClassToObjectClass(paramType);
-                paramTypes.add(paramType);
-                parameters.add(new Parameter(location, paramNameStrs.get(param), paramType));
-            } catch (IllegalArgumentException exception) {
+            if (paramType == null) {
                 throw createError(new IllegalArgumentException(
                     "Illegal parameter type [" + this.paramTypeStrs.get(param) + "] for function [" + name + "]."));
             }
+
+            paramClasses[param] = PainlessLookupUtility.typeToJavaType(paramType);
+            paramTypes.add(paramType);
+            parameters.add(new Parameter(location, paramNameStrs.get(param), paramType));
         }
 
-        org.objectweb.asm.commons.Method method = new org.objectweb.asm.commons.Method(
-            name, MethodType.methodType(Definition.defClassToObjectClass(rtnType), paramClasses).toMethodDescriptorString());
-        this.method = new Method(name, null, null, rtnType, paramTypes, method, Modifier.STATIC | Modifier.PRIVATE, null);
+        typeParameters = paramTypes;
+        methodType = MethodType.methodType(PainlessLookupUtility.typeToJavaType(returnType), paramClasses);
+        method = new org.objectweb.asm.commons.Method(name, MethodType.methodType(
+                PainlessLookupUtility.typeToJavaType(returnType), paramClasses).toMethodDescriptorString());
     }
 
     @Override
-    void analyze(Locals locals) {
-        if (statements == null || statements.isEmpty()) {
+    void analyze(ScriptRoot scriptRoot, Locals locals) {
+        if (block.statements.isEmpty()) {
             throw createError(new IllegalArgumentException("Cannot generate an empty function [" + name + "]."));
         }
 
         locals = Locals.newLocalScope(locals);
 
-        AStatement last = statements.get(statements.size() - 1);
+        block.lastSource = true;
+        block.analyze(scriptRoot, locals);
+        methodEscape = block.methodEscape;
 
-        for (AStatement statement : statements) {
-            // Note that we do not need to check after the last statement because
-            // there is no statement that can be unreachable after the last.
-            if (allEscape) {
-                throw createError(new IllegalArgumentException("Unreachable statement."));
-            }
-
-            statement.lastSource = statement == last;
-
-            statement.analyze(locals);
-
-            methodEscape = statement.methodEscape;
-            allEscape = statement.allEscape;
-        }
-
-        if (!methodEscape && rtnType != void.class) {
+        if (!methodEscape && returnType != void.class) {
             throw createError(new IllegalArgumentException("Not all paths provide a return value for method [" + name + "]."));
         }
 
-        if (reserved.getMaxLoopCounter() > 0) {
+        if (settings.getMaxLoopCounter() > 0) {
             loop = locals.getVariable(null, Locals.LOOP);
         }
     }
 
     /** Writes the function to given ClassVisitor. */
-    void write (ClassVisitor writer, CompilerSettings settings, Globals globals) {
+    void write(ClassWriter classWriter, Globals globals) {
         int access = Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC;
         if (synthetic) {
             access |= Opcodes.ACC_SYNTHETIC;
         }
-        final MethodWriter function = new MethodWriter(access, method.method, writer, globals.getStatements(), settings);
-        function.visitCode();
-        write(function, globals);
-        function.endMethod();
+        final MethodWriter methodWriter = classWriter.newMethodWriter(access, method);
+        methodWriter.visitCode();
+        write(classWriter, methodWriter, globals);
+        methodWriter.endMethod();
     }
 
     @Override
-    void write(MethodWriter function, Globals globals) {
-        if (reserved.getMaxLoopCounter() > 0) {
+    void write(ClassWriter classWriter, MethodWriter methodWriter, Globals globals) {
+        if (settings.getMaxLoopCounter() > 0) {
             // if there is infinite loop protection, we do this once:
             // int #loop = settings.getMaxLoopCounter()
-            function.push(reserved.getMaxLoopCounter());
-            function.visitVarInsn(Opcodes.ISTORE, loop.getSlot());
+            methodWriter.push(settings.getMaxLoopCounter());
+            methodWriter.visitVarInsn(Opcodes.ISTORE, loop.getSlot());
         }
 
-        for (AStatement statement : statements) {
-            statement.write(function, globals);
-        }
+        block.write(classWriter, methodWriter, globals);
 
         if (!methodEscape) {
-            if (rtnType == void.class) {
-                function.returnValue();
+            if (returnType == void.class) {
+                methodWriter.returnValue();
             } else {
                 throw createError(new IllegalStateException("Illegal tree structure."));
             }
         }
-
-        String staticHandleFieldName = Def.getUserFunctionHandleFieldName(name, parameters.size());
-        globals.addConstantInitializer(new Constant(location, WriterConstants.METHOD_HANDLE_TYPE,
-                                                    staticHandleFieldName, this::initializeConstant));
-    }
-
-    private void initializeConstant(MethodWriter writer) {
-        final Handle handle = new Handle(Opcodes.H_INVOKESTATIC,
-                CLASS_TYPE.getInternalName(),
-                name,
-                method.method.getDescriptor(),
-                false);
-        writer.push(handle);
     }
 
     @Override
@@ -238,6 +187,6 @@ public final class SFunction extends AStatement {
         if (false == (paramTypeStrs.isEmpty() && paramNameStrs.isEmpty())) {
             description.add(joinWithName("Args", pairwiseToString(paramTypeStrs, paramNameStrs), emptyList()));
         }
-        return multilineToString(description, statements);
+        return multilineToString(description, block.statements);
     }
 }

@@ -36,15 +36,27 @@ public class CompositeAggregationBuilderTests extends BaseAggregationTestCase<Co
             histo.script(new Script(randomAlphaOfLengthBetween(10, 20)));
         }
         if (randomBoolean()) {
-            histo.dateHistogramInterval(randomFrom(DateHistogramInterval.days(10),
+            histo.calendarInterval(randomFrom(DateHistogramInterval.days(1),
                 DateHistogramInterval.minutes(1), DateHistogramInterval.weeks(1)));
         } else {
-            histo.interval(randomNonNegativeLong());
+            histo.fixedInterval(randomFrom(new DateHistogramInterval(randomNonNegativeLong() + "ms"),
+                DateHistogramInterval.days(10), DateHistogramInterval.hours(10)));
         }
         if (randomBoolean()) {
-            histo.timeZone(randomDateTimeZone());
+            histo.timeZone(randomZone());
+        }
+        if (randomBoolean()) {
+            histo.missingBucket(true);
         }
         return histo;
+    }
+
+    private GeoTileGridValuesSourceBuilder randomGeoTileGridValuesSourceBuilder() {
+        GeoTileGridValuesSourceBuilder geoTile = new GeoTileGridValuesSourceBuilder(randomAlphaOfLengthBetween(5, 10));
+        if (randomBoolean()) {
+            geoTile.precision(randomIntBetween(1, 12));
+        }
+        return geoTile;
     }
 
     private TermsValuesSourceBuilder randomTermsSourceBuilder() {
@@ -55,6 +67,9 @@ public class CompositeAggregationBuilderTests extends BaseAggregationTestCase<Co
             terms.script(new Script(randomAlphaOfLengthBetween(10, 20)));
         }
         terms.order(randomFrom(SortOrder.values()));
+        if (randomBoolean()) {
+            terms.missingBucket(true);
+        }
         return terms;
     }
 
@@ -65,6 +80,9 @@ public class CompositeAggregationBuilderTests extends BaseAggregationTestCase<Co
         } else {
             histo.script(new Script(randomAlphaOfLengthBetween(10, 20)));
         }
+        if (randomBoolean()) {
+            histo.missingBucket(true);
+        }
         histo.interval(randomDoubleBetween(Math.nextUp(0), Double.MAX_VALUE, false));
         return histo;
     }
@@ -74,7 +92,7 @@ public class CompositeAggregationBuilderTests extends BaseAggregationTestCase<Co
         int numSources = randomIntBetween(1, 10);
         List<CompositeValuesSourceBuilder<?>> sources = new ArrayList<>();
         for (int i = 0; i < numSources; i++) {
-            int type = randomIntBetween(0, 2);
+            int type = randomIntBetween(0, 3);
             switch (type) {
                 case 0:
                     sources.add(randomTermsSourceBuilder());
@@ -84,6 +102,9 @@ public class CompositeAggregationBuilderTests extends BaseAggregationTestCase<Co
                     break;
                 case 2:
                     sources.add(randomHistogramSourceBuilder());
+                    break;
+                case 3:
+                    sources.add(randomGeoTileGridValuesSourceBuilder());
                     break;
                 default:
                     throw new AssertionError("wrong branch");

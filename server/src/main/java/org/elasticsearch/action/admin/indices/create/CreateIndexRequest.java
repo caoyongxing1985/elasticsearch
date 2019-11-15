@@ -21,7 +21,6 @@ package org.elasticsearch.action.admin.indices.create;
 
 import org.elasticsearch.ElasticsearchGenerationException;
 import org.elasticsearch.ElasticsearchParseException;
-import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.IndicesRequest;
 import org.elasticsearch.action.admin.indices.alias.Alias;
@@ -29,7 +28,6 @@ import org.elasticsearch.action.admin.indices.mapping.put.PutMappingRequest;
 import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.action.support.master.AcknowledgedRequest;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesArray;
@@ -41,7 +39,6 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.DeprecationHandler;
 import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
-import org.elasticsearch.common.xcontent.ToXContentObject;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentHelper;
@@ -49,8 +46,6 @@ import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentType;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.UncheckedIOException;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -71,7 +66,7 @@ import static org.elasticsearch.common.settings.Settings.writeSettingsToStream;
  * @see org.elasticsearch.client.Requests#createIndexRequest(String)
  * @see CreateIndexResponse
  */
-public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> implements IndicesRequest, ToXContentObject {
+public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> implements IndicesRequest {
 
     public static final ParseField MAPPINGS = new ParseField("mappings");
     public static final ParseField SETTINGS = new ParseField("settings");
@@ -87,9 +82,25 @@ public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> 
 
     private final Set<Alias> aliases = new HashSet<>();
 
-    private final Map<String, IndexMetaData.Custom> customs = new HashMap<>();
-
     private ActiveShardCount waitForActiveShards = ActiveShardCount.DEFAULT;
+
+    public CreateIndexRequest(StreamInput in) throws IOException {
+        super(in);
+        cause = in.readString();
+        index = in.readString();
+        settings = readSettingsFromStream(in);
+        int size = in.readVInt();
+        for (int i = 0; i < size; i++) {
+            final String type = in.readString();
+            String source = in.readString();
+            mappings.put(type, source);
+        }
+        int aliasesSize = in.readVInt();
+        for (int i = 0; i < aliasesSize; i++) {
+            aliases.add(new Alias(in));
+        }
+        waitForActiveShards = ActiveShardCount.readFrom(in);
+    }
 
     public CreateIndexRequest() {
     }
@@ -189,8 +200,7 @@ public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> 
     /**
      * The settings to create the index with (either json/yaml/properties format)
      */
-    @SuppressWarnings("unchecked")
-    public CreateIndexRequest settings(Map source) {
+    public CreateIndexRequest settings(Map<String, ?> source) {
         try {
             XContentBuilder builder = XContentFactory.contentBuilder(XContentType.JSON);
             builder.map(source);
@@ -220,16 +230,9 @@ public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> 
      * @param xContentType the content type of the mapping source
      */
     private CreateIndexRequest mapping(String type, BytesReference source, XContentType xContentType) {
-        if (mappings.containsKey(type)) {
-            throw new IllegalStateException("mappings for type \"" + type + "\" were already defined");
-        }
         Objects.requireNonNull(xContentType);
-        try {
-            mappings.put(type, XContentHelper.convertToJson(source, false, false, xContentType));
-            return this;
-        } catch (IOException e) {
-            throw new UncheckedIOException("failed to convert to json", e);
-        }
+        Map<String, Object> mappingAsMap = XContentHelper.convertToMap(source, false, xContentType).v2();
+        return mapping(type, mappingAsMap);
     }
 
     /**
@@ -256,8 +259,7 @@ public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> 
      * @param type   The mapping type
      * @param source The mapping source
      */
-    @SuppressWarnings("unchecked")
-    public CreateIndexRequest mapping(String type, Map source) {
+    public CreateIndexRequest mapping(String type, Map<String, ?> source) {
         if (mappings.containsKey(type)) {
             throw new IllegalStateException("mappings for type \"" + type + "\" were already defined");
         }
@@ -266,9 +268,10 @@ public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> 
             source = MapBuilder.<String, Object>newMapBuilder().put(type, source).map();
         }
         try {
-            XContentBuilder builder = XContentFactory.contentBuilder(XContentType.JSON);
+            XContentBuilder builder = XContentFactory.jsonBuilder();
             builder.map(source);
-            return mapping(type, builder);
+            mappings.put(type, Strings.toString(builder));
+            return this;
         } catch (IOException e) {
             throw new ElasticsearchGenerationException("Failed to generate [" + source + "]", e);
         }
@@ -286,8 +289,7 @@ public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> 
     /**
      * Sets the aliases that will be associated with the index when it gets created
      */
-    @SuppressWarnings("unchecked")
-    public CreateIndexRequest aliases(Map source) {
+    public CreateIndexRequest aliases(Map<String, ?> source) {
         try {
             XContentBuilder builder = XContentFactory.jsonBuilder();
             builder.map(source);
@@ -382,6 +384,9 @@ public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> 
         for (Map.Entry<String, ?> entry : source.entrySet()) {
             String name = entry.getKey();
             if (SETTINGS.match(name, deprecationHandler)) {
+                if (entry.getValue() instanceof Map == false) {
+                    throw new ElasticsearchParseException("key [settings] must be an object");
+                }
                 settings((Map<String, Object>) entry.getValue());
             } else if (MAPPINGS.match(name, deprecationHandler)) {
                 Map<String, Object> mappings = (Map<String, Object>) entry.getValue();
@@ -391,18 +396,7 @@ public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> 
             } else if (ALIASES.match(name, deprecationHandler)) {
                 aliases((Map<String, Object>) entry.getValue());
             } else {
-                // maybe custom?
-                IndexMetaData.Custom proto = IndexMetaData.lookupPrototype(name);
-                if (proto != null) {
-                    try {
-                        customs.put(name, proto.fromMap((Map<String, Object>) entry.getValue()));
-                    } catch (IOException e) {
-                        throw new ElasticsearchParseException("failed to parse custom metadata for [{}]", name);
-                    }
-                } else {
-                    // found a key which is neither custom defined nor one of the supported ones
-                    throw new ElasticsearchParseException("unknown key [{}] for create index", name);
-                }
+                throw new ElasticsearchParseException("unknown key [{}] for create index", name);
             }
         }
         return this;
@@ -414,18 +408,6 @@ public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> 
 
     public Set<Alias> aliases() {
         return this.aliases;
-    }
-
-    /**
-     * Adds custom metadata to the index to be created.
-     */
-    public CreateIndexRequest custom(IndexMetaData.Custom custom) {
-        customs.put(custom.type(), custom);
-        return this;
-    }
-
-    public Map<String, IndexMetaData.Custom> customs() {
-        return this.customs;
     }
 
     public ActiveShardCount waitForActiveShards() {
@@ -460,39 +442,6 @@ public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> 
         return waitForActiveShards(ActiveShardCount.from(waitForActiveShards));
     }
 
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        cause = in.readString();
-        index = in.readString();
-        settings = readSettingsFromStream(in);
-        int size = in.readVInt();
-        for (int i = 0; i < size; i++) {
-            final String type = in.readString();
-            String source = in.readString();
-            if (in.getVersion().before(Version.V_6_0_0_alpha1)) { // TODO change to 5.3.0 after backport
-                // we do not know the content type that comes from earlier versions so we autodetect and convert
-                source = XContentHelper.convertToJson(new BytesArray(source), false, false, XContentFactory.xContentType(source));
-            }
-            mappings.put(type, source);
-        }
-        int customSize = in.readVInt();
-        for (int i = 0; i < customSize; i++) {
-            String type = in.readString();
-            IndexMetaData.Custom customIndexMetaData = IndexMetaData.lookupPrototypeSafe(type).readFrom(in);
-            customs.put(type, customIndexMetaData);
-        }
-        int aliasesSize = in.readVInt();
-        for (int i = 0; i < aliasesSize; i++) {
-            aliases.add(Alias.read(in));
-        }
-        if (in.getVersion().before(Version.V_7_0_0_alpha1)) {
-            in.readBoolean(); // updateAllTypes
-        }
-        waitForActiveShards = ActiveShardCount.readFrom(in);
-    }
-
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
@@ -504,51 +453,11 @@ public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> 
             out.writeString(entry.getKey());
             out.writeString(entry.getValue());
         }
-        out.writeVInt(customs.size());
-        for (Map.Entry<String, IndexMetaData.Custom> entry : customs.entrySet()) {
-            out.writeString(entry.getKey());
-            entry.getValue().writeTo(out);
-        }
         out.writeVInt(aliases.size());
         for (Alias alias : aliases) {
             alias.writeTo(out);
         }
-        if (out.getVersion().before(Version.V_7_0_0_alpha1)) {
-            out.writeBoolean(true); // updateAllTypes
-        }
         waitForActiveShards.writeTo(out);
     }
 
-    @Override
-    public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-        builder.startObject();
-        innerToXContent(builder, params);
-        builder.endObject();
-        return builder;
-    }
-
-    public XContentBuilder innerToXContent(XContentBuilder builder, Params params) throws IOException {
-        builder.startObject(SETTINGS.getPreferredName());
-        settings.toXContent(builder, params);
-        builder.endObject();
-
-        builder.startObject(MAPPINGS.getPreferredName());
-        for (Map.Entry<String, String> entry : mappings.entrySet()) {
-            try (InputStream stream = new BytesArray(entry.getValue()).streamInput()) {
-                builder.rawField(entry.getKey(), stream, XContentType.JSON);
-            }
-        }
-        builder.endObject();
-
-        builder.startObject(ALIASES.getPreferredName());
-        for (Alias alias : aliases) {
-            alias.toXContent(builder, params);
-        }
-        builder.endObject();
-
-        for (Map.Entry<String, IndexMetaData.Custom> entry : customs.entrySet()) {
-            builder.field(entry.getKey(), entry.getValue(), params);
-        }
-        return builder;
-    }
 }
